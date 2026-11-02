@@ -7,4 +7,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv-speech/
+.venv-yolo/
+*.egg-info/
 
