@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from PyQt5.QtCore import pyqtSignal, QThread
+from PyQt5.QtCore import pyqtSignal, QThread, QTimer
 from PyQt5.QtWidgets import (
     QApplication, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget)
@@ -29,6 +29,7 @@ class VoiceControlWindow(QMainWindow):
     text_requested = pyqtSignal(str)
     cancel_requested = pyqtSignal()
     adapter_error = pyqtSignal(str, str)
+    speech_shutdown_requested = pyqtSignal()
 
     def __init__(self, controller: RuntimeController, recorder, transcriber, *,
                  sample_rate: int = 16000,
@@ -40,7 +41,9 @@ class VoiceControlWindow(QMainWindow):
         self._controller = controller
         self._shutdown_ros = shutdown_ros or (lambda: None)
         self._shutdown_timeout_ms = max(1, int(shutdown_timeout_ms))
+        self._shutdown_started = False
         self._shutdown_done = False
+        self._shutdown_retry_pending = False
         self._region_names = {
             region.id: region.name
             for region in controller.semantic_map.regions
@@ -110,6 +113,7 @@ class VoiceControlWindow(QMainWindow):
             self._speech_worker.start_recording)
         self.stop_recording_requested.connect(
             self._speech_worker.stop_and_transcribe)
+        self.speech_shutdown_requested.connect(self._speech_worker.shutdown)
         self._speech_worker.transcript.connect(self.text_requested.emit)
         self._speech_worker.error.connect(self.adapter_error.emit)
         self._speech_worker.recording_changed.connect(self._recording_changed)
@@ -198,24 +202,57 @@ class VoiceControlWindow(QMainWindow):
         self.error_label.setText(f'[{error.code}] {error.message}{suffix}')
 
     def shutdown(self):
-        """Cancel, bounded-join workers, and release the ROS context once."""
+        """Stop admission and finalize only after every owned worker exits."""
         if self._shutdown_done:
-            return
-        self._shutdown_done = True
-        timeout_seconds = self._shutdown_timeout_ms / 1000.0
-        self._controller.cancel()
-        self._controller.wait(timeout_seconds)
-        self._navigation_worker.detach()
-        for thread in (self._speech_thread, self._navigation_thread):
-            thread.requestInterruption()
-            thread.quit()
-            thread.wait(self._shutdown_timeout_ms)
-        self._shutdown_ros()
+            return True
+        if not self._shutdown_started:
+            self._shutdown_started = True
+            self.record_button.setEnabled(False)
+            self.text_input.setEnabled(False)
+            self.send_button.setEnabled(False)
+            self.cancel_button.setEnabled(False)
+            self._speech_worker.close_admission()
+            self._navigation_worker.close_admission()
+            self.speech_shutdown_requested.emit()
+            self._controller.cancel()
+            self._navigation_thread.quit()
+        return self._try_finish_shutdown(wait=True)
+
+    def _try_finish_shutdown(self, *, wait=False):
+        """Use bounded waits, deferring close until all owned work is gone."""
+        wait_seconds = self._shutdown_timeout_ms / 1000.0 if wait else 0.0
+        wait_ms = self._shutdown_timeout_ms if wait else 0
+        route_stopped = self._controller.wait(wait_seconds)
+        navigation_stopped = (
+            not self._navigation_thread.isRunning()
+            or self._navigation_thread.wait(wait_ms))
+        speech_stopped = (
+            not self._speech_thread.isRunning()
+            or self._speech_thread.wait(wait_ms))
+        if route_stopped and navigation_stopped and speech_stopped:
+            self._navigation_worker.detach()
+            self._shutdown_ros()
+            self._shutdown_done = True
+            self._shutdown_retry_pending = False
+            return True
+        self.status_label.setText(
+            'Đang chờ tác vụ nền dừng an toàn trước khi đóng...')
+        if not self._shutdown_retry_pending:
+            self._shutdown_retry_pending = True
+            QTimer.singleShot(20, self._retry_shutdown)
+        return False
+
+    def _retry_shutdown(self):
+        self._shutdown_retry_pending = False
+        if self._try_finish_shutdown():
+            self.close()
 
     def closeEvent(self, event):
         """Clean up the process before accepting window close."""
-        self.shutdown()
-        event.accept()
+        if self.shutdown():
+            event.accept()
+        else:
+            event.ignore()
 
 
 def _default_config_path(filename):

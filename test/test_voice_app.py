@@ -55,6 +55,21 @@ class Transcriber:
         return TranscriptionResult('Đi đến B', 'vi', 0.01)
 
 
+class SlowTranscriber(Transcriber):
+    """Hold inference until a test explicitly releases external work."""
+
+    def __init__(self):
+        """Expose inference entry and release synchronization."""
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(self, samples, sample_rate):
+        """Block beyond the UI shutdown timeout before returning."""
+        self.entered.set()
+        assert self.release.wait(2)
+        return super().transcribe(samples, sample_rate)
+
+
 class Backend:
     """Hold navigation until the UI issues cancellation."""
 
@@ -73,28 +88,49 @@ class Backend:
         return RouteState.CANCELED
 
 
-@pytest.fixture
-def window(app, tmp_path):
-    """Create a real runtime window with faked external adapters."""
+class SuccessBackend(Backend):
+    """Complete one route without waiting for cancellation."""
+
+    def execute(self, region, cancel_event, on_progress):
+        """Publish one final progress update and succeed."""
+        self.calls.append(region.id)
+        self.entered.set()
+        on_progress(LegProgress(region.id, distance_remaining=0.0,
+                                elapsed_seconds=1.0))
+        return RouteState.SUCCEEDED
+
+
+def make_window(tmp_path, backend=None, recorder=None, transcriber=None,
+                shutdown_timeout_ms=1000):
+    """Build one visible window and return all owned test boundaries."""
     semantic, occupancy = runtime_map(tmp_path)
-    backend = Backend()
+    backend = backend or Backend()
     runtime = RuntimeController(
         semantic, occupancy, backend,
         current_pose=lambda: GoalPose(2.0, 2.0, 0.0),
     )
-    recorder = Recorder()
+    recorder = recorder or Recorder()
+    transcriber = transcriber or Transcriber()
     shutdown_calls = []
     widget = VoiceControlWindow(
-        runtime, recorder, Transcriber(), sample_rate=16000,
-        connection_status='Nav2 sẵn sàng', gpu_status='NVIDIA CUDA sẵn sàng',
+        runtime, recorder, transcriber, sample_rate=16000,
+        connection_status='Nav2 sẵn sàng',
+        gpu_status='NVIDIA CUDA sẵn sàng',
         shutdown_ros=lambda: shutdown_calls.append(True),
-        shutdown_timeout_ms=1000,
+        shutdown_timeout_ms=shutdown_timeout_ms,
     )
     widget.show()
+    return widget, backend, recorder, shutdown_calls
+
+
+@pytest.fixture
+def window(app, tmp_path):
+    """Create a real runtime window with faked external adapters."""
+    widget, backend, recorder, shutdown_calls = make_window(tmp_path)
     app.processEvents()
     yield widget, backend, recorder, shutdown_calls
     widget.close()
-    app.processEvents()
+    wait_until(app, lambda: not widget.isVisible())
 
 
 def wait_until(app, predicate, timeout=2000):
@@ -158,3 +194,73 @@ def test_close_is_bounded_and_shuts_ros_exactly_once(window, app):
     app.processEvents()
     widget.shutdown()
     assert shutdown_calls == [True]
+
+
+def test_success_completion_reenables_command_controls(app, tmp_path):
+    """Successful completion must unlock text and push-to-talk controls."""
+    widget, backend, _, shutdown_calls = make_window(
+        tmp_path, backend=SuccessBackend())
+    widget.text_input.setText('Đi đến B')
+    QTest.mouseClick(widget.send_button, Qt.LeftButton)
+    wait_until(app, lambda: backend.entered.is_set())
+    wait_until(app, lambda: 'thành công' in widget.status_label.text())
+    assert widget.record_button.isEnabled()
+    assert widget.text_input.isEnabled()
+    assert widget.send_button.isEnabled()
+    assert not widget.cancel_button.isEnabled()
+    widget.close()
+    wait_until(app, lambda: shutdown_calls == [True])
+
+
+def test_close_rejects_queued_command_before_navigation_admission(app, tmp_path):
+    """A queued text event cannot start a route after shutdown begins."""
+    widget, backend, _, shutdown_calls = make_window(tmp_path)
+    widget.text_requested.emit('Đi đến B')
+    widget.close()
+    wait_until(app, lambda: shutdown_calls == [True])
+    assert backend.calls == []
+
+
+def test_close_cancels_active_route_before_destroying_ros(app, tmp_path):
+    """ROS lifetime must extend through cooperative route cancellation."""
+    widget, backend, _, shutdown_calls = make_window(tmp_path)
+    widget.text_input.setText('Đi đến B')
+    QTest.mouseClick(widget.send_button, Qt.LeftButton)
+    wait_until(app, lambda: backend.entered.is_set())
+    widget.close()
+    wait_until(app, lambda: shutdown_calls == [True])
+    assert backend.calls == ['b']
+    assert not widget._navigation_thread.isRunning()
+
+
+def test_close_stops_active_recording_without_transcription(app, tmp_path):
+    """Closing push-to-talk must release the microphone stream immediately."""
+    recorder = Recorder()
+    transcriber = SlowTranscriber()
+    widget, _, _, shutdown_calls = make_window(
+        tmp_path, recorder=recorder, transcriber=transcriber)
+    QTest.mousePress(widget.record_button, Qt.LeftButton)
+    wait_until(app, lambda: recorder.starts == 1)
+    widget.close()
+    wait_until(app, lambda: shutdown_calls == [True])
+    assert recorder.stops == 1
+    assert not transcriber.entered.is_set()
+
+
+def test_long_inference_defers_close_and_ros_shutdown(app, tmp_path):
+    """Non-cancelable inference must outlive neither its QThread nor window."""
+    transcriber = SlowTranscriber()
+    widget, _, recorder, shutdown_calls = make_window(
+        tmp_path, transcriber=transcriber, shutdown_timeout_ms=20)
+    QTest.mousePress(widget.record_button, Qt.LeftButton)
+    wait_until(app, lambda: recorder.starts == 1)
+    QTest.mouseRelease(widget.record_button, Qt.LeftButton)
+    wait_until(app, lambda: transcriber.entered.is_set())
+    assert not widget.close()
+    assert shutdown_calls == []
+    assert widget._speech_thread.isRunning()
+    assert widget.isVisible()
+    transcriber.release.set()
+    wait_until(app, lambda: shutdown_calls == [True])
+    assert not widget._speech_thread.isRunning()
+    assert not widget.isVisible()

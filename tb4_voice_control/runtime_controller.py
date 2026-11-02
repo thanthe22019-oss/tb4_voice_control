@@ -40,17 +40,22 @@ class RuntimeController:
     def __init__(self, semantic_map: SemanticMap, occupancy: OccupancyMap,
                  navigation_backend, *,
                  current_pose: Callable[[], GoalPose | None] | None = None,
-                 executor_factory=RouteExecutor):
+                 executor_factory=RouteExecutor,
+                 pose_poll_timeout: float = 0.05):
         """Build the executor and retain injectable external boundaries."""
+        if pose_poll_timeout < 0:
+            raise ValueError('pose_poll_timeout must not be negative')
         self.semantic_map = semantic_map
         self.occupancy = occupancy
-        self._current_pose = current_pose or (
-            lambda: getattr(navigation_backend, 'current_pose', None))
+        self._navigation_backend = navigation_backend
+        self._pose_poll_timeout = pose_poll_timeout
+        self._current_pose = current_pose or self._poll_current_pose
         self._listeners = {name: [] for name in self.EVENTS}
         self._listener_lock = threading.Lock()
         self._command_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._state = RuntimeState.IDLE
+        self._accepting = True
         self._executor = executor_factory(
             navigation_backend, semantic_map.regions,
             on_state=self._route_state_changed,
@@ -95,8 +100,10 @@ class RuntimeController:
     def process_text(self, text: str) -> None:
         """Process diagnostic or speech text through one route path."""
         transcript = str(text or '').strip()
-        self._emit('transcript', transcript)
         with self._command_lock:
+            if not self._accepting:
+                return
+            self._emit('transcript', transcript)
             if self.is_busy:
                 self._report_error(
                     'route_active',
@@ -148,7 +155,14 @@ class RuntimeController:
 
     def report_error(self, code: str, message: str) -> None:
         """Publish microphone/model errors without ever creating a route."""
-        self._report_error(code, message, preserve_state=self.is_busy)
+        with self._command_lock:
+            if self._accepting:
+                self._report_error(code, message, preserve_state=self.is_busy)
+
+    def close_admission(self) -> None:
+        """Synchronize with command planning, then reject all future work."""
+        with self._command_lock:
+            self._accepting = False
 
     def cancel(self) -> None:
         """Cancel cooperatively; the executor owns terminal state."""
@@ -173,6 +187,12 @@ class RuntimeController:
             point = (pose[0], pose[1])
         region = find_current_region(point, self.semantic_map, self.occupancy)
         return region.id if region is not None else None
+
+    def _poll_current_pose(self):
+        poll = getattr(self._navigation_backend, 'poll_pose', None)
+        if poll is not None:
+            return poll(timeout=self._pose_poll_timeout)
+        return getattr(self._navigation_backend, 'current_pose', None)
 
     def _route_state_changed(self, route_state: RouteState) -> None:
         if route_state is RouteState.RUNNING:

@@ -1,6 +1,8 @@
 """Qt queued-signal bridges for speech and the pure runtime controller."""
 
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+import threading
+
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject, QThread
 
 from tb4_voice_control.audio_capture import AudioCaptureError
 from tb4_voice_control.speech import SpeechModelError
@@ -20,11 +22,17 @@ class SpeechWorker(QObject):
         self._transcriber = transcriber
         self._sample_rate = sample_rate
         self._recording = False
+        self._accepting = threading.Event()
+        self._accepting.set()
+
+    def close_admission(self):
+        """Reject queued starts before the UI begins bounded shutdown."""
+        self._accepting.clear()
 
     @pyqtSlot()
     def start_recording(self):
         """Start push-to-talk capture and publish typed device failures."""
-        if self._recording:
+        if self._recording or not self._accepting.is_set():
             return
         try:
             self._recorder.start()
@@ -38,6 +46,14 @@ class SpeechWorker(QObject):
     def stop_and_transcribe(self):
         """Stop capture, run inference, then emit only the resulting text."""
         if not self._recording:
+            return
+        if not self._accepting.is_set():
+            try:
+                self._recorder.stop()
+            except Exception:  # noqa: B902 - shutdown owns final cleanup
+                pass
+            self._recording = False
+            self.recording_changed.emit(False)
             return
         try:
             samples = self._recorder.stop()
@@ -55,7 +71,21 @@ class SpeechWorker(QObject):
         except Exception as error:  # noqa: B902 - injected speech boundary
             self.error.emit('speech_error', str(error))
             return
-        self.transcript.emit(result.text)
+        if self._accepting.is_set():
+            self.transcript.emit(result.text)
+
+    @pyqtSlot()
+    def shutdown(self):
+        """Close an active stream without starting transcription, then stop."""
+        self._accepting.clear()
+        if self._recording:
+            try:
+                self._recorder.stop()
+            except Exception:  # noqa: B902 - cleanup must still finish
+                pass
+            self._recording = False
+            self.recording_changed.emit(False)
+        QThread.currentThread().quit()
 
 
 class NavigationWorker(QObject):
@@ -72,6 +102,8 @@ class NavigationWorker(QObject):
         """Subscribe to every controller event without widget access."""
         super().__init__()
         self._controller = controller
+        self._accepting = threading.Event()
+        self._accepting.set()
         self._unsubscribe = [
             controller.add_listener('transcript', self.transcript.emit),
             controller.add_listener('command', self.command.emit),
@@ -84,7 +116,8 @@ class NavigationWorker(QObject):
     @pyqtSlot(str)
     def process_text(self, text):
         """Send typed and transcribed text through the same controller API."""
-        self._controller.process_text(text)
+        if self._accepting.is_set():
+            self._controller.process_text(text)
 
     @pyqtSlot()
     def cancel(self):
@@ -94,7 +127,13 @@ class NavigationWorker(QObject):
     @pyqtSlot(str, str)
     def report_error(self, code, message):
         """Route adapter errors through the controller's typed channel."""
-        self._controller.report_error(code, message)
+        if self._accepting.is_set():
+            self._controller.report_error(code, message)
+
+    def close_admission(self):
+        """Synchronize with controller planning and reject queued commands."""
+        self._accepting.clear()
+        self._controller.close_admission()
 
     def detach(self):
         """Disconnect controller callbacks during bounded window shutdown."""

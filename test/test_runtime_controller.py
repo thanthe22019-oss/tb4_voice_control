@@ -92,6 +92,68 @@ def test_current_region_changes_from_to_route_and_suppresses_reached_goal(
     assert runtime.state is RuntimeState.SUCCEEDED
 
 
+def test_production_backend_polls_amcl_before_first_route(tmp_path, monkeypatch):
+    """A cached-only first command would resend the source region goal."""
+    from geometry_msgs.msg import PoseWithCovarianceStamped
+
+    from tb4_voice_control import nav2_backend
+    from tb4_voice_control.nav2_backend import BasicNavigatorBackend
+
+    class Navigator:
+        """Expose the real adapter's localization subscription boundary."""
+
+        def create_subscription(self, message, topic, callback, qos):
+            """Capture the concrete AMCL callback registered by the adapter."""
+            self.pose_callback = callback
+            return object()
+
+    executors = []
+
+    class CapturingExecutor:
+        """Capture planned IDs without invoking the Nav2 goal boundary."""
+
+        def __init__(self, backend, regions, on_state, on_progress):
+            """Retain state callback and planned route evidence."""
+            self.on_state = on_state
+            self.routes = []
+            executors.append(self)
+
+        def start(self, route):
+            """Record one route and complete it immediately."""
+            self.routes.append(route)
+            self.on_state(RouteState.SUCCEEDED)
+            return True
+
+        def cancel(self):
+            """Accept the controller lifecycle contract."""
+
+        def wait(self, timeout=None):
+            """Report that no worker remains."""
+            return True
+
+    navigator = Navigator()
+    backend = BasicNavigatorBackend(navigator)
+    spin_timeouts = []
+
+    def publish_pose(node, timeout_sec):
+        spin_timeouts.append(timeout_sec)
+        message = PoseWithCovarianceStamped()
+        message.header.frame_id = 'map'
+        message.pose.pose.position.x = 2.0
+        message.pose.pose.position.y = 2.0
+        message.pose.pose.orientation.w = 1.0
+        navigator.pose_callback(message)
+
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_once', publish_pose)
+    semantic, occupancy = runtime_map(tmp_path)
+    runtime = RuntimeController(
+        semantic, occupancy, backend, executor_factory=CapturingExecutor)
+    runtime.process_text('Đi từ A đến B')
+    assert executors[0].routes == [('b',)]
+    assert spin_timeouts and 0 < spin_timeouts[0] <= 0.1
+
+
 def test_invalid_text_reports_typed_error_and_sends_no_goal(tmp_path):
     """Empty, unknown, and ambiguous destinations must not leak a Nav2 goal."""
     runtime, backend, events = controller(tmp_path)
