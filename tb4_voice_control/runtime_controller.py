@@ -52,7 +52,9 @@ class RuntimeController:
         self._current_pose = current_pose or self._poll_current_pose
         self._listeners = {name: [] for name in self.EVENTS}
         self._listener_lock = threading.Lock()
-        self._command_lock = threading.Lock()
+        self._processing_lock = threading.RLock()
+        self._admission = threading.Condition()
+        self._inflight = {}
         self._state_lock = threading.Lock()
         self._state = RuntimeState.IDLE
         self._accepting = True
@@ -100,54 +102,75 @@ class RuntimeController:
     def process_text(self, text: str) -> None:
         """Process diagnostic or speech text through one route path."""
         transcript = str(text or '').strip()
-        with self._command_lock:
-            if not self._accepting:
-                return
-            self._emit('transcript', transcript)
-            if self.is_busy:
-                self._report_error(
-                    'route_active',
-                    'Một lộ trình đang chạy; hãy chờ hoàn tất '
-                    'hoặc nhấn Hủy.',
-                    preserve_state=True,
-                )
-                return
-            if not transcript:
-                self._report_error('empty_transcript',
-                                   'Không nhận được nội dung câu lệnh.')
+        with self._processing_lock:
+            if not self._begin_operation():
                 return
             try:
-                command = parse_command(transcript, self.semantic_map)
-            except CommandError as error:
-                self._report_error(error.code, str(error))
-                return
-            self._emit('command', command)
-            try:
-                current_id = self._current_region_id()
-            except Exception as error:  # noqa: B902 - injected pose boundary
-                self._report_error('localization_error',
-                                   f'Không đọc được vị trí robot: {error}')
-                return
-            route = plan_route(command, current_id)
-            self._emit('route', route)
-            if not route:
-                self._set_state(RuntimeState.SUCCEEDED)
-                return
+                self._process_admitted_text(transcript)
+            finally:
+                self._finish_operation()
 
-            self._set_state(RuntimeState.NAVIGATING)
-            try:
-                accepted = self._executor.start(route)
-            except Exception as error:  # noqa: B902 - executor boundary
-                self._report_error('nav2_error',
-                                   f'Không thể gửi lộ trình tới Nav2: {error}')
-                return
-            if not accepted:
-                self._report_error(
-                    'route_active',
-                    'Một lộ trình đang chạy; hãy chờ hoàn tất '
-                    'hoặc nhấn Hủy.',
-                    preserve_state=True,
-                )
+    def _process_admitted_text(self, transcript):
+        """Run one admitted command with callbacks outside admission state."""
+        if not self._admission_open():
+            return
+        self._emit('transcript', transcript)
+        if not self._admission_open():
+            return
+        if self.is_busy:
+            self._report_error(
+                'route_active',
+                'Một lộ trình đang chạy; hãy chờ hoàn tất '
+                'hoặc nhấn Hủy.',
+                preserve_state=True,
+            )
+            return
+        if not transcript:
+            self._report_error('empty_transcript',
+                               'Không nhận được nội dung câu lệnh.')
+            return
+        try:
+            command = parse_command(transcript, self.semantic_map)
+        except CommandError as error:
+            self._report_error(error.code, str(error))
+            return
+        self._emit('command', command)
+        if not self._admission_open():
+            return
+        try:
+            current_id = self._current_region_id()
+        except Exception as error:  # noqa: B902 - injected pose boundary
+            self._report_error('localization_error',
+                               f'Không đọc được vị trí robot: {error}')
+            return
+        route = plan_route(command, current_id)
+        self._emit('route', route)
+        if not self._admission_open():
+            return
+        if not route:
+            self._set_state(RuntimeState.SUCCEEDED)
+            return
+
+        self._set_state(RuntimeState.NAVIGATING)
+        if not self._admission_open():
+            self._set_state(RuntimeState.CANCELED)
+            return
+        try:
+            accepted = self._executor.start(route)
+        except Exception as error:  # noqa: B902 - executor boundary
+            self._report_error('nav2_error',
+                               f'Không thể gửi lộ trình tới Nav2: {error}')
+            return
+        if not self._admission_open():
+            self._executor.cancel()
+            return
+        if not accepted:
+            self._report_error(
+                'route_active',
+                'Một lộ trình đang chạy; hãy chờ hoàn tất '
+                'hoặc nhấn Hủy.',
+                preserve_state=True,
+            )
 
     def process_transcript(self, text: str) -> None:
         """Name the speech entry while deliberately sharing process_text."""
@@ -155,14 +178,43 @@ class RuntimeController:
 
     def report_error(self, code: str, message: str) -> None:
         """Publish microphone/model errors without ever creating a route."""
-        with self._command_lock:
-            if self._accepting:
+        with self._processing_lock:
+            if not self._begin_operation():
+                return
+            try:
                 self._report_error(code, message, preserve_state=self.is_busy)
+            finally:
+                self._finish_operation()
 
     def close_admission(self) -> None:
-        """Synchronize with command planning, then reject all future work."""
-        with self._command_lock:
+        """Reject new work and wait for every other admitted caller."""
+        current = threading.get_ident()
+        with self._admission:
             self._accepting = False
+            while sum(self._inflight.values()) > self._inflight.get(current, 0):
+                self._admission.wait()
+
+    def _begin_operation(self):
+        current = threading.get_ident()
+        with self._admission:
+            if not self._accepting:
+                return False
+            self._inflight[current] = self._inflight.get(current, 0) + 1
+            return True
+
+    def _finish_operation(self):
+        current = threading.get_ident()
+        with self._admission:
+            remaining = self._inflight[current] - 1
+            if remaining:
+                self._inflight[current] = remaining
+            else:
+                del self._inflight[current]
+            self._admission.notify_all()
+
+    def _admission_open(self):
+        with self._admission:
+            return self._accepting
 
     def cancel(self) -> None:
         """Cancel cooperatively; the executor owns terminal state."""

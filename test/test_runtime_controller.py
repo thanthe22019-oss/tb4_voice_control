@@ -201,3 +201,28 @@ def test_adapter_and_nav2_failures_stay_typed_and_send_no_extra_goal(
     assert events['error'][-1].code == 'nav2_failed'
     assert runtime.state is RuntimeState.ERROR
     assert failing.calls == ['b']
+
+
+def test_reentrant_listeners_close_admission_without_deadlock_or_late_route(
+        tmp_path):
+    """Public callbacks may close admission synchronously on their own thread."""
+    runtime, backend, _ = controller(tmp_path)
+    runtime.add_listener('transcript',
+                         lambda transcript: runtime.close_admission())
+    text_call = threading.Thread(
+        target=runtime.process_text, args=('Đi đến B',), daemon=True)
+    text_call.start()
+    text_call.join(0.5)
+    assert not text_call.is_alive(), 'transcript callback deadlocked admission'
+    assert backend.calls == []
+
+    runtime, backend, _ = controller(tmp_path)
+    runtime.add_listener('error',
+                         lambda error: runtime.close_admission())
+    error_call = threading.Thread(
+        target=runtime.report_error,
+        args=('microphone_error', 'Không mở được microphone'), daemon=True)
+    error_call.start()
+    error_call.join(0.5)
+    assert not error_call.is_alive(), 'error callback deadlocked admission'
+    assert backend.calls == []

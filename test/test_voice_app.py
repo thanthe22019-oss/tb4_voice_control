@@ -156,8 +156,8 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
     wait_until(app, lambda: recorder.starts == 1)
     QTest.mouseRelease(widget.record_button, Qt.LeftButton)
     wait_until(app, lambda: backend.entered.is_set())
+    wait_until(app, lambda: widget.transcript_view.toPlainText() == 'Đi đến B')
     assert recorder.stops == 1
-    assert widget.transcript_view.toPlainText() == 'Đi đến B'
     assert 'GO_TO' in widget.intent_label.text()
     assert 'Phòng thí nghiệm' in widget.route_list.text()
     assert '1/1' in widget.leg_label.text()
