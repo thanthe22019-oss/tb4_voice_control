@@ -75,6 +75,20 @@ def test_invalid_geometry_disables_save_and_focuses_first_error(window, tmp_path
     assert window.save_action.isEnabled()
 
 
+def test_focusing_hidden_region_error_reveals_overlay_and_checks_visibility(window):
+    region = window.document.semantic_map.regions[0]
+    window.canvas.goal_changed.emit('a', replace(region.goal, x=-100))
+    window.region_list.item(0).setCheckState(Qt.Unchecked)
+    assert not window.canvas._polygons
+    window.focus_first_error()
+    assert window.document.selected_region_id == 'a'
+    assert 'a' in window.canvas._polygons
+    assert window.region_list.item(0).checkState() == Qt.Checked
+    # The displayed state must remain usable after automatic reveal.
+    window.region_list.item(0).setCheckState(Qt.Unchecked)
+    assert not window.canvas._polygons
+
+
 def test_invalid_property_draft_cannot_save_old_document(window, tmp_path):
     window.region_list.setCurrentRow(0)
     window.color_edit.setText('999, 0, 0')

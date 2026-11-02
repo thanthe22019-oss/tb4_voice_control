@@ -303,6 +303,10 @@ class MapEditorWindow(QMainWindow):
         issue = item.data(Qt.UserRole)
         if issue.region_id is not None and self.document is not None:
             self._hidden.discard(issue.region_id)
+            for index in range(self.region_list.count()):
+                region_item = self.region_list.item(index)
+                if region_item.data(Qt.UserRole) == issue.region_id:
+                    region_item.setCheckState(Qt.Checked)
             self._select_region(issue.region_id)
             region = self.document.selected_region
             if region:

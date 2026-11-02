@@ -1,6 +1,8 @@
 """Deterministic, native-resolution RGB semantic overlays without modifying maps."""
 
 import argparse
+from importlib import resources
+from io import BytesIO
 import math
 from pathlib import Path
 import sys
@@ -34,7 +36,8 @@ def render_segmented_map(occupancy: OccupancyMap, semantic_map: SemanticMap) -> 
     # glyphs; drawing stays deterministic and independent of a Qt display.
     image = Image.fromarray(result)
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype('DejaVuSans.ttf', 14)
+    font_data = resources.files('tb4_voice_control').joinpath('assets/DejaVuSans.ttf').read_bytes()
+    font = ImageFont.truetype(BytesIO(font_data), 14)
     for region, contour in zip(semantic_map.regions, contours):
         moments = cv2.moments(contour)
         if moments['m00']:

@@ -2,7 +2,10 @@
 
 from dataclasses import replace
 import math
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import cv2
 import numpy as np
@@ -11,6 +14,41 @@ from PIL import Image
 from tb4_voice_control.map_model import MapMetadata, OccupancyMap
 from tb4_voice_control.map_render import main, render_segmented_map
 from tb4_voice_control.regions import GoalPose, Region, save_regions, SemanticMap
+
+
+def test_built_package_renders_with_bundled_font_without_system_font_lookup(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    library = tmp_path / 'lib'
+    build = subprocess.run([sys.executable, 'setup.py', 'build_py', '--build-lib', str(library)],
+                           cwd=root, capture_output=True, text=True)
+    assert build.returncode == 0, build.stdout + build.stderr
+    output = tmp_path / 'packaged.png'
+    script = """
+from importlib import resources
+from pathlib import Path
+import sys
+from PIL import ImageFont
+from tb4_voice_control import map_render
+
+assert Path(map_render.__file__).is_relative_to(Path(sys.argv[1]))
+assets = resources.files('tb4_voice_control').joinpath('assets')
+assert 0 < len(assets.joinpath('DejaVuSans.ttf').read_bytes()) < 1000000
+assert assets.joinpath('DejaVuSans-LICENSE.txt').read_text(encoding='utf-8')
+original = ImageFont.truetype
+def embedded_only(font, *args, **kwargs):
+    if isinstance(font, (str, bytes, Path)):
+        raise OSError('System font lookup is unavailable')
+    return original(font, *args, **kwargs)
+ImageFont.truetype = embedded_only
+assert map_render.main(sys.argv[2:]) == 0
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', script, str(library),
+         str(root / 'config/regions.yaml'), str(output)],
+        cwd=tmp_path, env={**os.environ, 'PYTHONPATH': str(library)},
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert Image.open(output).size == (788, 1101)
 
 
 def test_render_is_repeatable_with_rgb_fill_centroid_label_and_rotated_yaw():
