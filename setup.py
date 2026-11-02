@@ -32,6 +32,7 @@ setup(
             'validate_regions = tb4_voice_control.validate_regions:main',
             'map_editor = tb4_voice_control.map_editor:main',
             'render_segmented_map = tb4_voice_control.map_render:main',
+            'voice_control = tb4_voice_control.voice_app:main',
         ],
     },
 )
