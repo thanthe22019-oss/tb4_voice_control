@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from enum import Enum
-import re
 import unicodedata
 
 from tb4_voice_control.regions import normalize_alias, SemanticMap
@@ -67,6 +66,9 @@ def _resolve_destination(span: str, aliases: dict[str, str]) -> str:
     while position < len(tokens):
         if tokens[position] in ('va', 'hoac', 'den', 'toi') and matches:
             position += 1
+            if position == len(tokens):
+                raise CommandError('missing_destination',
+                                   'Missing destination after connector')
             continue
         options = sorted(
             (key for key in aliases
@@ -84,18 +86,46 @@ def _resolve_destination(span: str, aliases: dict[str, str]) -> str:
     return matches[0]
 
 
+def _parse_from_to(tokens: list[str], aliases: dict[str, str]) -> VoiceCommand:
+    """Accept exactly one complete source/destination separator reading."""
+    interpretations = []
+    errors = []
+    for index in range(1, len(tokens)):
+        if tokens[index] not in ('den', 'toi'):
+            continue
+        source = ' '.join(tokens[:index])
+        if source not in aliases:
+            continue
+        try:
+            destination = _resolve_destination(' '.join(tokens[index + 1:]),
+                                               aliases)
+        except CommandError as error:
+            errors.append(error)
+            continue
+        interpretations.append(VoiceCommand(Intent.FROM_TO,
+                                            aliases[source], destination))
+    if len(interpretations) > 1:
+        raise CommandError('ambiguous_command',
+                           'Multiple complete source/destination readings')
+    if interpretations:
+        return interpretations[0]
+    for code in ('missing_destination', 'ambiguous_destination'):
+        for error in errors:
+            if error.code == code:
+                raise error
+    raise CommandError('unknown_region', 'Unknown source or destination region')
+
+
 def parse_command(text: str, semantic_map: SemanticMap) -> VoiceCommand:
     """Parse move-to or move-from-to commands without substring guessing."""
     aliases = _alias_index(semantic_map)
-    normalized = normalize_text(text, strip_diacritics=True)
-    pattern = r'(?:di|di chuyen)(?: tu (.+?))? (?:den|toi)(?: (.*))?'
-    match = re.fullmatch(pattern, normalized)
-    if match is None:
+    tokens = normalize_text(text, strip_diacritics=True).split()
+    if not tokens or tokens[0] != 'di':
         raise CommandError('invalid_command', 'Unsupported navigation command')
-    source, destination = match.groups()
-    destination_id = _resolve_destination(destination or '', aliases)
-    if source is None:
-        return VoiceCommand(Intent.GO_TO, None, destination_id)
-    if source not in aliases:
-        raise CommandError('unknown_region', f'Unknown source: {source}')
-    return VoiceCommand(Intent.FROM_TO, aliases[source], destination_id)
+    tokens = tokens[2:] if len(tokens) > 1 and tokens[1] == 'chuyen' else tokens[1:]
+    if tokens and tokens[0] == 'tu':
+        return _parse_from_to(tokens[1:], aliases)
+    if not tokens or tokens[0] not in ('den', 'toi'):
+        raise CommandError('invalid_command', 'Unsupported navigation command')
+    destination = _resolve_destination(' '.join(tokens[1:]), aliases)
+    return VoiceCommand(Intent.GO_TO, None, destination)

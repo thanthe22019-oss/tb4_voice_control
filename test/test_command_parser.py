@@ -43,6 +43,31 @@ def test_from_to_grammar():
         Intent.FROM_TO, 'zone_a', 'zone_b')
 
 
+def test_source_alias_containing_folded_connector_word():
+    """A folded đèn inside the full source alias is not the separator."""
+    room = Region('lamp_room', 'Phòng đèn', ('phòng đèn',), (7, 8, 9),
+                  ((4, 0), (5, 0), (5, 1)), GoalPose(4, 0, 0))
+    command = parse_command('đi từ phòng đèn đến B', semantic_map(room))
+    assert (command.intent, command.source_id, command.destination_id) == (
+        Intent.FROM_TO, 'lamp_room', 'zone_b')
+
+
+def test_multiple_complete_from_to_interpretations_are_ambiguous():
+    """A separator in a source or destination alias cannot force a guess."""
+    long_source = Region('long_source', 'Long source', ('A đến B',),
+                         (7, 8, 9), ((4, 0), (5, 0), (5, 1)),
+                         GoalPose(4, 0, 0))
+    long_destination = Region('long_destination', 'Long destination',
+                              ('B đến C',), (10, 11, 12),
+                              ((6, 0), (7, 0), (7, 1)), GoalPose(6, 0, 0))
+    c = Region('zone_c', 'C', ('C',), (13, 14, 15),
+               ((8, 0), (9, 0), (9, 1)), GoalPose(8, 0, 0))
+    with pytest.raises(CommandError) as error:
+        parse_command('đi từ A đến B đến C',
+                      semantic_map(long_source, long_destination, c))
+    assert error.value.code == 'ambiguous_command'
+
+
 def test_normalization_preserves_or_folds_vietnamese_diacritics():
     """Optional accent folding uses the persisted alias key."""
     phrase = '  PHÒNG---Thí  nghiệm! '
@@ -67,6 +92,9 @@ def test_longest_alias_consumes_the_full_destination():
     ('đi đến A và B', 'ambiguous_destination'),
     ('đi đến A hoặc B', 'ambiguous_destination'),
     ('đi đến A đến B', 'ambiguous_destination'),
+    ('đi đến A hoặc', 'missing_destination'),
+    ('đi đến A đến', 'missing_destination'),
+    ('đi từ A đến B hoặc', 'missing_destination'),
     ('đi đến khu vực A B', 'ambiguous_destination'),
     ('đi từ X đến B', 'unknown_region'),
 ])
