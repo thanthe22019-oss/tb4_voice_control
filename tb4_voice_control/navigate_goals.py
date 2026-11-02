@@ -5,14 +5,19 @@ from dataclasses import dataclass
 import math
 from pathlib import Path
 import sys
-import time
+import threading
 
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PoseStamped
-from lifecycle_msgs.srv import GetState
-from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from nav2_simple_commander.robot_navigator import BasicNavigator
 import rclpy
 from rclpy.utilities import remove_ros_args
+from tb4_voice_control.nav2_backend import BasicNavigatorBackend
+from tb4_voice_control.nav2_backend import goal_to_pose  # noqa: F401
+from tb4_voice_control.nav2_backend import navigate_one_goal  # noqa: F401
+from tb4_voice_control.nav2_backend import wait_for_active_node  # noqa: F401
+from tb4_voice_control.nav2_backend import wait_for_amcl_pose  # noqa: F401
+from tb4_voice_control.nav2_backend import wait_for_nav2  # noqa: F401
+from tb4_voice_control.route_executor import RouteState
 import yaml
 
 
@@ -69,115 +74,6 @@ def load_goals(path, selected_names=None):
             raise ValueError(f'{name} x, y and yaw must be finite')
         goals.append(Goal(name=name, x=x, y=y, yaw=yaw))
     return frame_id, goals
-
-
-def goal_to_pose(navigator, frame_id, goal):
-    """Convert a planar goal to a stamped ROS pose."""
-    pose = PoseStamped()
-    pose.header.frame_id = frame_id
-    pose.header.stamp = navigator.get_clock().now().to_msg()
-    pose.pose.position.x = goal.x
-    pose.pose.position.y = goal.y
-    pose.pose.orientation.z = math.sin(goal.yaw / 2.0)
-    pose.pose.orientation.w = math.cos(goal.yaw / 2.0)
-    return pose
-
-
-def wait_for_amcl_pose(navigator, timeout):
-    """Wait for AMCL to provide a localized pose."""
-    deadline = time.monotonic() + timeout
-    navigator.info('Waiting for a real AMCL pose...')
-    while rclpy.ok() and not navigator.initial_pose_received:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0.0:
-            return False
-        rclpy.spin_once(navigator, timeout_sec=min(0.2, remaining))
-    return navigator.initial_pose_received
-
-
-def wait_for_active_node(navigator, node_name, timeout):
-    """Wait until one Nav2 lifecycle node reaches active state."""
-    client = navigator.create_client(GetState, f'{node_name}/get_state')
-    deadline = time.monotonic() + timeout
-    try:
-        while rclpy.ok():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                return False
-            if not client.wait_for_service(timeout_sec=min(0.5, remaining)):
-                continue
-            future = client.call_async(GetState.Request())
-            rclpy.spin_until_future_complete(
-                navigator,
-                future,
-                timeout_sec=min(1.0, remaining),
-            )
-            response = future.result() if future.done() else None
-            if response is not None and response.current_state.label == 'active':
-                return True
-            time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
-        return False
-    finally:
-        navigator.destroy_client(client)
-
-
-def wait_for_nav2(navigator, timeout):
-    """Verify localization, lifecycle state and action availability."""
-    start = time.monotonic()
-    if not wait_for_amcl_pose(navigator, timeout):
-        navigator.error(
-            'No /amcl_pose received. Set 2D Pose Estimate in RViz first.'
-        )
-        return False
-
-    remaining = timeout - (time.monotonic() - start)
-    if remaining <= 0.0 or not wait_for_active_node(
-        navigator, 'bt_navigator', remaining
-    ):
-        navigator.error('bt_navigator did not become active before timeout.')
-        return False
-
-    remaining = timeout - (time.monotonic() - start)
-    if remaining <= 0.0 or not navigator.nav_to_pose_client.wait_for_server(
-        timeout_sec=remaining
-    ):
-        navigator.error('/navigate_to_pose is not available before timeout.')
-        return False
-    navigator.info('AMCL and Nav2 are ready.')
-    return True
-
-
-def navigate_one_goal(navigator, frame_id, goal, timeout, feedback_period):
-    """Execute one goal, canceling it when its deadline expires."""
-    navigator.info(
-        f'Starting {goal.name}: x={goal.x:.3f}, y={goal.y:.3f}, '
-        f'yaw={goal.yaw:.3f} rad'
-    )
-    if not navigator.goToPose(goal_to_pose(navigator, frame_id, goal)):
-        navigator.error(f'{goal.name} was rejected by Nav2.')
-        return TaskResult.FAILED
-
-    deadline = time.monotonic() + timeout
-    next_feedback = time.monotonic() + feedback_period
-    while rclpy.ok() and not navigator.isTaskComplete():
-        now = time.monotonic()
-        if now >= deadline:
-            navigator.error(f'{goal.name} exceeded {timeout:.1f} seconds; canceling.')
-            navigator.cancelTask()
-            return TaskResult.CANCELED
-        if now >= next_feedback:
-            feedback = navigator.getFeedback()
-            if feedback is not None:
-                distance = feedback.distance_remaining
-                navigator.info(
-                    f'{goal.name} in progress; distance remaining: {distance:.2f} m'
-                )
-            next_feedback = now + feedback_period
-
-    if not rclpy.ok():
-        navigator.cancelTask()
-        return TaskResult.CANCELED
-    return navigator.getResult()
 
 
 def parse_arguments():
@@ -237,25 +133,22 @@ def main():
     navigator = BasicNavigator(node_name='tb4_voice_control_goal_navigator')
     active_task = False
     try:
+        backend = BasicNavigatorBackend(
+            navigator, frame_id=frame_id, nav2_timeout=arguments.nav2_timeout,
+            goal_timeout=arguments.goal_timeout, feedback_period=arguments.feedback_period)
         navigator.info(
             f'Loaded {len(goals)} goal(s) from {arguments.goals_file}: '
             + ', '.join(goal.name for goal in goals)
         )
-        if not wait_for_nav2(navigator, arguments.nav2_timeout):
+        if not backend.wait_until_ready():
             return 3
 
         for index, goal in enumerate(goals, start=1):
             navigator.info(f'Executing goal {index}/{len(goals)}.')
             active_task = True
-            result = navigate_one_goal(
-                navigator,
-                frame_id,
-                goal,
-                arguments.goal_timeout,
-                arguments.feedback_period,
-            )
+            result = backend.execute(goal, threading.Event(), None)
             active_task = False
-            if result != TaskResult.SUCCEEDED:
+            if result is not RouteState.SUCCEEDED:
                 navigator.error(f'{goal.name} finished with result {result.name}.')
                 return 4
             navigator.info(f'{goal.name} succeeded.')

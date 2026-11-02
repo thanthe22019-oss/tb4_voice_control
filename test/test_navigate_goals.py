@@ -1,9 +1,12 @@
 """Tests for navigation goal file parsing and pose conversion."""
 
 import math
+from types import SimpleNamespace
 
 import pytest
+from tb4_voice_control import navigate_goals
 from tb4_voice_control.navigate_goals import Goal, goal_to_pose, load_goals
+from tb4_voice_control.route_executor import RouteState
 import yaml
 
 
@@ -78,3 +81,69 @@ def test_goal_to_pose_converts_yaw():
     assert pose.pose.position.y == pytest.approx(-2.5)
     assert pose.pose.orientation.z == pytest.approx(math.sqrt(0.5))
     assert pose.pose.orientation.w == pytest.approx(math.sqrt(0.5))
+
+
+@pytest.mark.parametrize('ready, result, expected, goal_count, cancels', [
+    (True, RouteState.SUCCEEDED, 0, 2, 0),
+    (False, RouteState.SUCCEEDED, 3, 0, 0),
+    (True, RouteState.FAILED, 4, 1, 0),
+    (True, RouteState.CANCELED, 4, 1, 0),
+    (True, KeyboardInterrupt, 130, 1, 1),
+])
+def test_cli_backend_preserves_exit_codes_and_stops_on_failure(
+        tmp_path, monkeypatch, ready, result, expected, goal_count, cancels):
+    """CLI readiness, failure, and Ctrl+C retain their established exit codes."""
+    path = tmp_path / 'goals.yaml'
+    path.write_text(yaml.safe_dump({
+        'frame_id': 'map', 'goals': {
+            'a': {'x': 1, 'y': 2, 'yaw': 0},
+            'b': {'x': 3, 'y': 4, 'yaw': 0},
+        }}), encoding='utf-8')
+    arguments = SimpleNamespace(goals_file=path, goals=None, nav2_timeout=5,
+                                goal_timeout=10, feedback_period=1)
+    calls = []
+    navigator = SimpleNamespace(
+        info=lambda message: None, error=lambda message: None,
+        warn=lambda message: None, cancelTask=lambda: calls.append('cancel'),
+        destroyNode=lambda: calls.append('destroy'))
+
+    class Backend:
+        """Replace external navigation while retaining the real CLI control flow."""
+
+        def __init__(self, actual_navigator, **options):
+            assert actual_navigator is navigator
+            assert options == {'frame_id': 'map', 'nav2_timeout': 5,
+                               'goal_timeout': 10, 'feedback_period': 1}
+
+        def wait_until_ready(self):
+            return ready
+
+        def execute(self, goal, cancel_event, on_progress):
+            calls.append(goal.name)
+            if result is KeyboardInterrupt:
+                raise KeyboardInterrupt
+            return result
+
+    monkeypatch.setattr(navigate_goals, 'parse_arguments', lambda: arguments)
+    monkeypatch.setattr(navigate_goals, 'BasicNavigator', lambda **options: navigator)
+    monkeypatch.setattr(navigate_goals, 'BasicNavigatorBackend', Backend)
+    monkeypatch.setattr(navigate_goals.rclpy, 'init', lambda **options: None)
+    monkeypatch.setattr(navigate_goals.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(navigate_goals.rclpy, 'shutdown', lambda: calls.append('shutdown'))
+
+    assert navigate_goals.main() == expected
+    assert sum(item in ('a', 'b') for item in calls) == goal_count
+    assert calls.count('cancel') == cancels
+    assert calls[-2:] == ['destroy', 'shutdown']
+
+
+def test_cli_bad_goal_file_does_not_initialize_ros(tmp_path, monkeypatch):
+    """Invalid goal files still exit 2 before touching ROS."""
+    monkeypatch.setattr(navigate_goals, 'parse_arguments', lambda: SimpleNamespace(
+        goals_file=tmp_path / 'missing.yaml', goals=None))
+
+    def unexpected_init(**options):
+        pytest.fail('Invalid input must not initialize ROS')
+
+    monkeypatch.setattr(navigate_goals.rclpy, 'init', unexpected_init)
+    assert navigate_goals.main() == 2
