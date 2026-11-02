@@ -7,7 +7,7 @@ regions:
     name: Khu vực A
     aliases: [A, khu A, khu vực A]
     color: [66, 135, 245]
-    polygon_pixels: [[316, 549], [336, 549], [336, 569], [316, 569]]
+    polygon_pixels: [[185, 530], [380, 530], [380, 580], [185, 620]]
     goal:
       x: -3.38309231340713
       y: -0.40846482798119327
@@ -16,7 +16,7 @@ regions:
     name: Khu vực B
     aliases: [B, khu B, khu vực B, phòng thí nghiệm]
     color: [52, 168, 83]
-    polygon_pixels: [[430, 493], [450, 493], [450, 513], [430, 513]]
+    polygon_pixels: [[430, 440], [600, 440], [620, 555], [430, 555]]
     goal:
       x: 2.346728433599496
       y: 2.3597883289175723
@@ -25,7 +25,7 @@ regions:
     name: Khu vực C
     aliases: [C, khu C, khu vực C]
     color: [251, 188, 5]
-    polygon_pixels: [[404, 491], [424, 491], [424, 511], [404, 511]]
+    polygon_pixels: [[295, 445], [425, 445], [425, 520], [295, 520]]
     goal:
       x: 1.0492361131784176
       y: 2.4590821102823286

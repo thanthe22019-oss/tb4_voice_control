@@ -69,6 +69,24 @@ def test_native_image_pixels_are_not_resampled(canvas):
     assert items[0].pos() == QPointF(-0.5, -0.5)
 
 
+def test_scene_bounds_include_entire_first_and_last_cells(canvas):
+    assert canvas.sceneRect().left() == -0.5
+    assert canvas.sceneRect().top() == -0.5
+    assert canvas.sceneRect().right() == 49.5
+    assert canvas.sceneRect().bottom() == 39.5
+
+
+def test_replacing_map_cancels_goal_started_on_old_map(canvas, occupancy):
+    goals = QSignalSpy(canvas.goal_changed)
+    canvas.set_selected_region('a')
+    canvas.set_mode('place_goal')
+    point = canvas.mapFromScene(QPointF(20, 20))
+    QTest.mousePress(canvas.viewport(), Qt.LeftButton, pos=point)
+    canvas.set_map(occupancy)
+    QTest.mouseRelease(canvas.viewport(), Qt.LeftButton, pos=point)
+    assert not goals
+
+
 @pytest.mark.parametrize('close_with', ['click', 'enter'])
 def test_draw_polygon_emits_complete_pixel_vertices(canvas, close_with):
     completed = QSignalSpy(canvas.polygon_completed)

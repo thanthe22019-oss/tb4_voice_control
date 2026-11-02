@@ -98,9 +98,9 @@ class EditorDocument:
         """Append a structurally valid region with a unique ID."""
         self._edit(len(self.semantic_map.regions), None, region)
 
-    def update_region(self, region: Region):
-        """Replace a region while keeping its ID and document position."""
-        index = self._index(region.id)
+    def update_region(self, region: Region, original_id: str | None = None):
+        """Replace or rename a region atomically at its document position."""
+        index = self._index(region.id if original_id is None else original_id)
         self._edit(index, self.semantic_map.regions[index], region)
 
     def delete_region(self, identifier: str):

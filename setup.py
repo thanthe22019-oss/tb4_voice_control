@@ -29,6 +29,8 @@ setup(
             'navigate_goals = tb4_voice_control.navigate_goals:main',
             'record_goal = tb4_voice_control.goal_recorder:main',
             'validate_regions = tb4_voice_control.validate_regions:main',
+            'map_editor = tb4_voice_control.map_editor:main',
+            'render_segmented_map = tb4_voice_control.map_render:main',
         ],
     },
 )

@@ -99,6 +99,19 @@ def test_noop_update_preserves_clean_state_and_redo(source):
     assert document.can_redo
 
 
+def test_rename_is_one_atomic_undoable_edit_and_rejects_duplicate_ids(source):
+    document = EditorDocument(source)
+    renamed = replace(region(), id='renamed')
+    document.update_region(renamed, original_id='a')
+    assert document.semantic_map.regions == (renamed, region('b'))
+    assert document.undo()
+    assert document.semantic_map == source
+    assert document.redo()
+    with pytest.raises(ValueError, match='duplicate'):
+        document.update_region(replace(renamed, id='b'), original_id='renamed')
+    assert document.semantic_map.regions == (renamed, region('b'))
+
+
 def test_invalid_region_ids_do_not_modify_document(source):
     document = EditorDocument(source)
     with pytest.raises(ValueError, match='duplicate'):

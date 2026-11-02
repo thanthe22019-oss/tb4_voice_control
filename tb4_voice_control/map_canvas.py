@@ -77,6 +77,7 @@ class MapCanvas(QGraphicsView):
     def set_map(self, occupancy: OccupancyMap):
         """Load an independent QImage copy with integer pixel centers."""
         self._cancel_draw()
+        self._goal_start = None
         self.scene().clear()
         self._overlays, self._handles, self._polygons = [], [], {}
         self.occupancy = occupancy
@@ -86,7 +87,7 @@ class MapCanvas(QGraphicsView):
         background = self.scene().addPixmap(QPixmap.fromImage(image))
         background.setPos(-0.5, -0.5)
         background.setZValue(-1)
-        self.setSceneRect(0, 0, width, height)
+        self.setSceneRect(-0.5, -0.5, width, height)
         self.resetTransform()
         self._render_regions()
 
