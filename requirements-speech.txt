@@ -1,0 +1,4 @@
+# Speech-only dependencies for Python 3.10 on Ubuntu 22.04.
+# The setup script prints the exact resolved versions after installation.
+faster-whisper>=1.1.0,<2.0
+sounddevice>=0.4.6,<1.0

@@ -1,0 +1,6 @@
+sample_rate: 16000
+max_record_seconds: 15
+model_size: small
+device: cuda
+compute_type: float16
+language: vi
