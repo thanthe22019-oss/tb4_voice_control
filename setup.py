@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'navigate_goals = tb4_voice_control.navigate_goals:main',
             'record_goal = tb4_voice_control.goal_recorder:main',
+            'validate_regions = tb4_voice_control.validate_regions:main',
         ],
     },
 )
