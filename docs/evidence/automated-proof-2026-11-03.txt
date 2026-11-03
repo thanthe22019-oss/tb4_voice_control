@@ -1,0 +1,85 @@
+TB4 Voice Control — automated proof
+Date: 2026-11-03 (Asia/Ho_Chi_Minh)
+Checkout paths below are sanitized as <workspace>.
+
+1. Focused install-assets gate
+
+  source /opt/ros/humble/setup.bash
+  PYTHONPATH="$PWD:$PYTHONPATH" QT_QPA_PLATFORM=offscreen \
+    pytest -q test/test_install_assets.py
+
+  5 passed in 0.52s
+
+2. Full pytest gate
+
+  source /opt/ros/humble/setup.bash
+  PYTHONPATH="$PWD:$PYTHONPATH" QT_QPA_PLATFORM=offscreen pytest -q
+
+  227 passed, 1 skipped, 2 warnings in 4.70s
+  Warnings: importlib.metadata SelectableGroups dict interface is deprecated.
+
+3. Colcon package gate
+
+  source /opt/ros/humble/setup.bash
+  colcon build --base-paths . --packages-select tb4_voice_control \
+    --symlink-install
+
+  Summary: 1 package finished [1.54s]
+
+  source /opt/ros/humble/setup.bash
+  colcon test --base-paths . --packages-select tb4_voice_control \
+    --event-handlers console_direct+
+
+  227 passed, 1 skipped, 2 warnings in 4.90s
+  Summary: 1 package finished [1min 0s]
+
+  source /opt/ros/humble/setup.bash
+  colcon test-result --verbose
+
+  Summary: 228 tests, 0 errors, 0 failures, 1 skipped
+
+The first colcon test attempt exposed a headless Qt abort because the test
+runner did not set QT_QPA_PLATFORM. test/conftest.py now selects "offscreen"
+before any PyQt import unless the caller explicitly selected another platform.
+The exact colcon command above then passed.
+
+4. Installed package and CLI gate
+
+  source /opt/ros/humble/setup.bash
+  source install/setup.bash
+  ros2 pkg prefix tb4_voice_control
+
+  <workspace>/install/tb4_voice_control
+
+Installed files verified present: launch/voice_navigation.launch.py;
+maps/map.yaml and map.pgm; config/regions.yaml and voice.yaml;
+artifacts/segmented_map.png; scripts/run_voice_control.sh; docs/DEMO.md,
+docs/TEST_MATRIX.md, docs/evidence/README.md and the automated proof log;
+requirements-speech.txt. Result: 12/12 present.
+
+All six installed entry points returned help with exit code 0:
+  navigate_goals, record_goal, validate_regions, map_editor,
+  render_segmented_map, voice_control.
+
+Installed semantic validation:
+  3 valid regions
+
+Installed renderer output:
+  Exported 3 regions to /tmp/tb4-installed-segmented-map.png
+  PNG image data, 788 x 1101, 8-bit/color RGB, non-interlaced
+
+Installed voice_navigation.launch.py --show-args exposed start_nav2,
+start_voice_ui, use_sim_time, world, map, rviz, regions_file and voice_config.
+The no-op reuse check exited 0 without starting Nav2 or the UI:
+
+  ros2 launch tb4_voice_control voice_navigation.launch.py \
+    start_nav2:=false start_voice_ui:=false use_sim_time:=false
+
+5. Explicitly pending external acceptance
+
+- NVIDIA CUDA: BLOCKED; nvidia-smi exited 9 during the environment audit.
+- Microphone: BLOCKED; arecord -l found no soundcards.
+- Live TurtleBot 4/Nav2 simulation scenarios: PENDING; not launched here.
+- GitHub public repository/push: BLOCKED by invalid auth/no remote; no login,
+  network write or push was attempted.
+- Academic HTML/PDF report: DEFERRED after the content requirements changed.

@@ -23,7 +23,7 @@ def generate_launch_description():
         launch_arguments={
             'world': LaunchConfiguration('world'),
             'model': 'standard',
-            'use_sim_time': 'true',
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
             'nav2': 'true',
             'slam': 'false',
             'localization': 'true',
@@ -34,6 +34,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('world', default_value='warehouse'),
         DeclareLaunchArgument('map', default_value=map_file),
+        DeclareLaunchArgument('use_sim_time', default_value='true',
+                              choices=['true', 'false']),
         DeclareLaunchArgument('rviz', default_value='true', choices=['true', 'false']),
         simulation,
     ])

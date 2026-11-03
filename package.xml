@@ -3,7 +3,7 @@
 <package format="3">
   <name>tb4_voice_control</name>
   <version>0.0.0</version>
-  <description>TurtleBot 4 voice control: warehouse SLAM and Nav2 baseline</description>
+  <description>Semantic map editing and CUDA voice navigation for TurtleBot 4</description>
   <maintainer email="sumika@todo.todo">sumika</maintainer>
   <license>Apache-2.0</license>
 

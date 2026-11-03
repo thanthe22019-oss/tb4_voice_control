@@ -266,14 +266,24 @@ def _default_config_path(filename):
         return Path(__file__).resolve().parents[1] / 'config' / filename
 
 
-def main(argv=None):
-    """Initialize ROS and speech only for the console runtime."""
+def _parse_runtime_arguments(argv=None):
+    """Parse application options while preserving ROS arguments for rclpy."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--regions', type=Path,
                         default=_default_config_path('regions.yaml'))
     parser.add_argument('--voice-config', type=Path,
                         default=_default_config_path('voice.yaml'))
-    arguments = parser.parse_args(argv)
+    ros_arguments = (list(sys.argv) if argv is None
+                     else [sys.argv[0], *argv])
+    from rclpy.utilities import remove_ros_args
+
+    application_arguments = remove_ros_args(ros_arguments)[1:]
+    return parser.parse_args(application_arguments), ros_arguments
+
+
+def main(argv=None):
+    """Initialize ROS and speech only for the console runtime."""
+    arguments, ros_arguments = _parse_runtime_arguments(argv)
     semantic_map = load_regions(arguments.regions)
     occupancy = load_occupancy_map(semantic_map.map_yaml)
     with arguments.voice_config.open(encoding='utf-8') as stream:
@@ -282,7 +292,7 @@ def main(argv=None):
     import rclpy
     from tb4_voice_control.nav2_backend import BasicNavigatorBackend
 
-    rclpy.init(args=[])
+    rclpy.init(args=ros_arguments)
     backend = BasicNavigatorBackend(frame_id=semantic_map.frame_id)
     controller = RuntimeController(semantic_map, occupancy, backend)
     recorder = AudioRecorder(
