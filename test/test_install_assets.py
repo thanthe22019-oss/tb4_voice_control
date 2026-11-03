@@ -3,6 +3,9 @@
 from pathlib import Path
 import runpy
 
+from launch import LaunchContext
+from launch.actions import ExecuteProcess, IncludeLaunchDescription
+from launch.utilities import perform_substitutions
 import pytest
 
 from tb4_voice_control import voice_app
@@ -35,7 +38,11 @@ def test_setup_installs_runtime_and_submission_assets(monkeypatch, project_root)
         for source in sources
     }
     required = {
+        ('share/ament_index/resource_index/packages',
+         'resource/tb4_voice_control'),
         ('share/tb4_voice_control', 'package.xml'),
+        ('share/tb4_voice_control', 'requirements-speech.txt'),
+        ('share/tb4_voice_control/launch', 'launch/tb4_nav2.launch.py'),
         ('share/tb4_voice_control/launch', 'launch/voice_navigation.launch.py'),
         ('share/tb4_voice_control/maps', 'maps/map.yaml'),
         ('share/tb4_voice_control/maps', 'maps/map.pgm'),
@@ -43,6 +50,7 @@ def test_setup_installs_runtime_and_submission_assets(monkeypatch, project_root)
         ('share/tb4_voice_control/config', 'config/voice.yaml'),
         ('share/tb4_voice_control/artifacts', 'artifacts/segmented_map.png'),
         ('share/tb4_voice_control/scripts', 'scripts/run_voice_control.sh'),
+        ('share/tb4_voice_control/scripts', 'scripts/setup_speech_venv.sh'),
         ('share/tb4_voice_control/docs', 'docs/DEMO.md'),
         ('share/tb4_voice_control/docs', 'docs/TEST_MATRIX.md'),
         ('share/tb4_voice_control/docs/evidence', 'docs/evidence/README.md'),
@@ -72,13 +80,14 @@ def test_readme_covers_the_complete_operator_workflow(project_root):
 
 def test_voice_launch_exposes_reuse_and_runtime_switches(
         project_root, monkeypatch, tmp_path):
-    """Losing either switch can start duplicate Nav2 or an unwanted voice UI."""
+    """Wire each switch, include, and runtime argument to its exact target."""
     monkeypatch.setenv('ROS_LOG_DIR', str(tmp_path / 'ros-log'))
     launch_path = project_root / 'launch' / 'voice_navigation.launch.py'
     assert launch_path.is_file()
+    monkeypatch.setattr(
+        'ament_index_python.packages.get_package_share_directory',
+        lambda _name: str(project_root))
     namespace = runpy.run_path(str(launch_path))
-    namespace['generate_launch_description'].__globals__[
-        'get_package_share_directory'] = lambda _name: str(project_root)
     description = namespace['generate_launch_description']()
     arguments = {
         entity.name: entity
@@ -91,12 +100,58 @@ def test_voice_launch_exposes_reuse_and_runtime_switches(
     assert arguments['start_voice_ui'].choices == ['true', 'false']
     navigation = next(
         entity for entity in description.entities
-        if entity.__class__.__name__ == 'IncludeLaunchDescription')
-    assert navigation.condition is not None
-    assert 'use_sim_time' in dict(navigation.launch_arguments)
-    assert any(entity.__class__.__name__ == 'ExecuteProcess'
-               and entity.condition is not None
-               for entity in description.entities)
+        if isinstance(entity, IncludeLaunchDescription))
+    voice_runtime = next(
+        entity for entity in description.entities
+        if isinstance(entity, ExecuteProcess))
+
+    nav2_only = LaunchContext()
+    nav2_only.launch_configurations.update({
+        'start_nav2': 'true',
+        'start_voice_ui': 'false',
+        'world': 'warehouse',
+        'map': '/tmp/map.yaml',
+        'rviz': 'false',
+        'use_sim_time': 'false',
+        'regions_file': '/tmp/regions.yaml',
+        'voice_config': '/tmp/voice.yaml',
+    })
+    assert navigation.condition.evaluate(nav2_only) is True
+    assert voice_runtime.condition.evaluate(nav2_only) is False
+
+    voice_only = LaunchContext()
+    voice_only.launch_configurations.update({
+        **nav2_only.launch_configurations,
+        'start_nav2': 'false',
+        'start_voice_ui': 'true',
+    })
+    assert navigation.condition.evaluate(voice_only) is False
+    assert voice_runtime.condition.evaluate(voice_only) is True
+
+    navigation.launch_description_source.get_launch_description(nav2_only)
+    include_target = navigation.launch_description_source.location
+    assert Path(include_target) == project_root / 'launch' / 'tb4_nav2.launch.py'
+    include_arguments = {
+        name: perform_substitutions(nav2_only, [value])
+        for name, value in navigation.launch_arguments
+    }
+    assert include_arguments == {
+        'world': 'warehouse',
+        'map': '/tmp/map.yaml',
+        'rviz': 'false',
+        'use_sim_time': 'false',
+    }
+
+    command = [
+        perform_substitutions(voice_only, token)
+        for token in voice_runtime.cmd
+    ]
+    assert command == [
+        str(project_root / 'scripts' / 'run_voice_control.sh'),
+        '--regions', '/tmp/regions.yaml',
+        '--voice-config', '/tmp/voice.yaml',
+        '--ros-args', '-p', 'use_sim_time:=false',
+    ]
 
 
 def test_runtime_arguments_preserve_ros_use_sim_time():
