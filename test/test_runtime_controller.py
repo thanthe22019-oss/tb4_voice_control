@@ -206,6 +206,39 @@ def test_text_flows_through_parser_planner_and_ordered_executor(tmp_path):
     assert runtime.state is RuntimeState.SUCCEEDED
 
 
+@pytest.mark.parametrize('outcome, terminal', [
+    (RouteState.SUCCEEDED, RuntimeState.SUCCEEDED),
+    (RouteState.CANCELED, RuntimeState.CANCELED),
+    (RouteState.FAILED, RuntimeState.ERROR),
+])
+def test_terminal_listener_rejected_command_does_not_strand_runtime(
+        tmp_path, outcome, terminal):
+    """A still-live terminal worker rejects once without locking out retries."""
+    backend = Backend(outcome=outcome)
+    runtime, _, events = controller(tmp_path, backend=backend)
+    attempts = []
+
+    def submit_during_terminal(state):
+        if state is terminal and not attempts:
+            attempts.append(state)
+            runtime.process_text('Đi đến B')
+
+    runtime.add_listener('state', submit_during_terminal)
+    runtime.process_text('Đi đến A')
+    assert runtime.wait(2)
+    assert attempts == [terminal]
+    assert backend.calls == ['a']
+    assert events['error'][-1].code == 'route_active'
+    assert runtime.state is terminal
+    assert not runtime.is_busy
+
+    backend.outcome = RouteState.SUCCEEDED
+    runtime.process_text('Đi đến B')
+    assert runtime.wait(2)
+    assert backend.calls == ['a', 'b']
+    assert runtime.state is RuntimeState.SUCCEEDED
+
+
 def test_current_region_changes_from_to_route_and_suppresses_reached_goal(
         tmp_path):
     """Ignoring AMCL dispatches an unnecessary source or destination."""

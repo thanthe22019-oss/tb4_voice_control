@@ -170,10 +170,8 @@ class RuntimeController:
             self._set_state(RuntimeState.SUCCEEDED)
             return
 
-        self._set_state(RuntimeState.NAVIGATING)
-        if not self._admission_open():
-            self._set_state(RuntimeState.CANCELED)
-            return
+        # Only the accepted executor's RUNNING notification changes state.
+        # A terminal listener can submit while that worker is still returning.
         try:
             accepted = self._executor.start(route)
         except Exception as error:  # noqa: B902 - executor boundary

@@ -264,6 +264,8 @@ class VoiceControlWindow(QMainWindow):
 
     def _try_finish_shutdown(self, *, wait=False):
         """Use bounded waits, deferring close until all owned work is gone."""
+        if self._shutdown_done:
+            return True
         wait_seconds = self._shutdown_timeout_ms / 1000.0 if wait else 0.0
         wait_ms = self._shutdown_timeout_ms if wait else 0
         route_stopped = self._controller.wait(wait_seconds)
@@ -275,9 +277,9 @@ class VoiceControlWindow(QMainWindow):
             or self._speech_thread.wait(wait_ms))
         if route_stopped and navigation_stopped and speech_stopped:
             self._navigation_worker.detach()
-            self._shutdown_ros()
             self._shutdown_done = True
             self._shutdown_retry_pending = False
+            self._shutdown_ros()
             return True
         self.status_label.setText(
             'Đang chờ tác vụ nền dừng an toàn trước khi đóng...')
@@ -288,6 +290,8 @@ class VoiceControlWindow(QMainWindow):
 
     def _retry_shutdown(self):
         self._shutdown_retry_pending = False
+        if self._shutdown_done:
+            return
         if self._try_finish_shutdown():
             self.close()
 

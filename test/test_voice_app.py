@@ -4,7 +4,7 @@ from dataclasses import replace
 import threading
 
 import numpy as np
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QMessageBox
 import pytest
@@ -228,6 +228,42 @@ def test_close_is_bounded_and_shuts_ros_exactly_once(window, app):
     app.processEvents()
     widget.shutdown()
     assert shutdown_calls == [True]
+
+
+def test_queued_close_retry_after_success_shuts_ros_down_once(app, tmp_path, monkeypatch):
+    """An already-queued retry cannot finalize a second successful close again."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    original_execute = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original_execute(*args)
+
+    backend.execute = execute
+    widget, _, _, shutdown_calls = make_window(
+        tmp_path, backend=backend, shutdown_timeout_ms=20)
+    queued = []
+    single_shot = QTimer.singleShot
+    monkeypatch.setattr(QTimer, 'singleShot', lambda delay, callback: queued.append(callback))
+    try:
+        widget._controller.process_text('Đi đến B')
+        wait_until(app, lambda: widget._controller.state.value == 'cleaning')
+        assert not widget.close()
+        assert len(queued) == 1
+        assert shutdown_calls == []
+        backend.resolve()
+        assert widget._controller.wait(2)
+        assert widget._navigation_thread.wait(2000)
+        wait_until(app, lambda: not widget._speech_thread.isRunning())
+        assert widget.close()
+        assert shutdown_calls == [True]
+        single_shot(0, queued.pop())
+        app.processEvents()
+        assert shutdown_calls == [True]
+    finally:
+        backend.resolve()
+        widget.close()
 
 
 def test_success_completion_reenables_command_controls(app, tmp_path):

@@ -1,12 +1,13 @@
 """Tests for navigation goal file parsing and pose conversion."""
 
 import math
+import signal
 from types import SimpleNamespace
 
 import pytest
 from tb4_voice_control import navigate_goals
 from tb4_voice_control.navigate_goals import Goal, goal_to_pose, load_goals
-from tb4_voice_control.route_executor import RouteState
+from tb4_voice_control.route_executor import CleanupState, RouteState
 import yaml
 
 
@@ -89,6 +90,7 @@ def test_goal_to_pose_converts_yaw():
     (True, RouteState.FAILED, 4, 1, 0),
     (True, RouteState.CANCELED, 4, 1, 0),
     (True, KeyboardInterrupt, 130, 1, 1),
+    (True, signal.SIGINT, 130, 1, 0),
 ])
 def test_cli_backend_preserves_exit_codes_and_stops_on_failure(
         tmp_path, monkeypatch, ready, result, expected, goal_count, cancels):
@@ -115,13 +117,17 @@ def test_cli_backend_preserves_exit_codes_and_stops_on_failure(
             assert options == {'frame_id': 'map', 'nav2_timeout': 5,
                                'goal_timeout': 10, 'feedback_period': 1}
 
-        def wait_until_ready(self):
+        def wait_until_ready(self, cancel_event=None):
             return ready
 
         def execute(self, goal, cancel_event, on_progress):
             calls.append(goal.name)
             if result is KeyboardInterrupt:
                 raise KeyboardInterrupt
+            if result is signal.SIGINT:
+                signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                assert cancel_event.is_set()
+                return RouteState.CANCELED
             return result
 
     monkeypatch.setattr(navigate_goals, 'parse_arguments', lambda: arguments)
@@ -147,3 +153,70 @@ def test_cli_bad_goal_file_does_not_initialize_ros(tmp_path, monkeypatch):
 
     monkeypatch.setattr(navigate_goals.rclpy, 'init', unexpected_init)
     assert navigate_goals.main() == 2
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_cli_pending_cleanup_retains_ros_until_confirmed_or_forced(
+        tmp_path, monkeypatch, force):
+    """Teardown cannot discard unresolved cleanup, including explicit force."""
+    arguments = SimpleNamespace(goals_file=tmp_path / 'goals.yaml', goals=None,
+                                nav2_timeout=5, goal_timeout=10, feedback_period=1)
+    calls, warnings, init_options = [], [], []
+    previous_handler = signal.getsignal(signal.SIGINT)
+
+    class Backend:
+        """Control only external action cleanup at the CLI contract boundary."""
+
+        cleanup_state = CleanupState.QUIESCENT
+        waits = 0
+
+        def wait_until_ready(self, cancel_event=None):
+            return True
+
+        def execute(self, goal, cancel_event, on_progress):
+            self.cleanup_state = CleanupState.PENDING
+            return RouteState.FAILED
+
+        def wait_for_cleanup(self, timeout):
+            assert calls == []
+            assert timeout is not None and timeout > 0
+            self.waits += 1
+            if self.waits == 2:
+                if force:
+                    assert any('unconfirmed' in message.lower() for message in warnings)
+                    assert any('ctrl+c' in message.lower() for message in warnings)
+                    signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                else:
+                    self.cleanup_state = CleanupState.QUIESCENT
+            assert self.waits <= 3, 'CLI must honor the explicit force request'
+            return self.cleanup_state
+
+        def force_abort_cleanup(self):
+            assert calls == []
+            calls.append('force')
+            self.cleanup_state = CleanupState.FORCE_ABORTED
+            return True
+
+    backend = Backend()
+
+    def destroy():
+        assert backend.cleanup_state is not CleanupState.PENDING
+        calls.append('destroy')
+
+    navigator = SimpleNamespace(info=lambda message: None, error=lambda message: None,
+                                warn=warnings.append, destroyNode=destroy)
+    monkeypatch.setattr(navigate_goals, 'parse_arguments', lambda: arguments)
+    monkeypatch.setattr(navigate_goals, 'load_goals', lambda *args: (
+        'map', [Goal('a', 1.0, 2.0, 0.0)]))
+    monkeypatch.setattr(navigate_goals, 'BasicNavigator', lambda **kwargs: navigator)
+    monkeypatch.setattr(navigate_goals, 'BasicNavigatorBackend', lambda *args, **kw: backend)
+    monkeypatch.setattr(navigate_goals.rclpy, 'init', lambda **kw: init_options.append(kw))
+    monkeypatch.setattr(navigate_goals.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(navigate_goals.rclpy, 'shutdown', lambda: calls.append('shutdown'))
+
+    assert navigate_goals.main() == 4
+    assert backend.waits == 2
+    assert calls == (['force'] if force else []) + ['destroy', 'shutdown']
+    assert signal.getsignal(signal.SIGINT) is previous_handler
+    from rclpy.signals import SignalHandlerOptions
+    assert init_options[0]['signal_handler_options'] == SignalHandlerOptions.NO
