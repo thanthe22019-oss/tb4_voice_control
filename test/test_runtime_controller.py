@@ -8,7 +8,7 @@ import pytest
 from tb4_voice_control.command_parser import Intent
 from tb4_voice_control.map_model import MapMetadata, OccupancyMap
 from tb4_voice_control.regions import GoalPose, Region, SemanticMap
-from tb4_voice_control.route_executor import RouteState
+from tb4_voice_control.route_executor import CleanupState, RouteState
 from tb4_voice_control.runtime_controller import (
     RuntimeController, RuntimeErrorInfo, RuntimeState)
 
@@ -49,6 +49,135 @@ class Backend:
             cancel_event.wait(2)
             return RouteState.CANCELED
         return self.outcome
+
+
+class CleanupBackend(Backend):
+    """Hold a failed action's cleanup until the test resolves it."""
+
+    def __init__(self):
+        super().__init__()
+        self.cleanup_state = CleanupState.PENDING
+        self.release = threading.Event()
+
+    def execute(self, region, cancel_event, on_progress):
+        self.calls.append(region.id)
+        self.entered.set()
+        return RouteState.FAILED
+
+    def wait_for_cleanup(self, timeout):
+        return self.release.wait(timeout)
+
+    def resolve(self):
+        self.cleanup_state = CleanupState.QUIESCENT
+        self.release.set()
+
+    def force_abort_cleanup(self):
+        self.cleanup_state = CleanupState.FORCE_ABORTED
+        self.release.set()
+        return True
+
+
+def test_cleanup_state_disables_text_and_sends_zero_second_goals(tmp_path):
+    """An unresolved action blocks both text and transcript admission."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    runtime, _, events = controller(tmp_path, backend=backend)
+    # Enter PENDING only after the executor accepts the first route.
+    original = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original(*args)
+
+    backend.execute = execute
+    cleaning = threading.Event()
+    runtime.add_listener('state', lambda state: cleaning.set()
+                         if state.value == 'cleaning' else None)
+    runtime.process_text('Đi đến A')
+    assert cleaning.wait(2)
+    assert runtime.state is RuntimeState.CLEANING
+    runtime.process_text('Đi đến B')
+    runtime.process_transcript('Đi đến B')
+    assert backend.calls == ['a']
+    assert 'chờ' in events['error'][-1].message.lower()
+    backend.resolve()
+    assert runtime.wait(2)
+
+
+def test_force_abort_is_explicit_and_permanently_rejects_routes(tmp_path):
+    """Forced local release must not permit a subsequent Nav2 goal."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    original = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original(*args)
+
+    backend.execute = execute
+    runtime, _, events = controller(tmp_path, backend=backend)
+    cleaning = threading.Event()
+    runtime.add_listener('state', lambda state: cleaning.set()
+                         if state.value == 'cleaning' else None)
+    runtime.process_text('Đi đến A')
+    assert cleaning.wait(2)
+    assert runtime.force_abort_cleanup()
+    assert runtime.wait(2)
+    runtime.process_text('Đi đến B')
+    assert backend.calls == ['a']
+    assert runtime.state is RuntimeState.ERROR
+    assert any('chưa' in error.message.lower() for error in events['error'])
+
+
+def test_confirmed_cleanup_restores_admission_after_failed_route(tmp_path):
+    """Confirmed cleanup retains failure while allowing a later route."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+
+    def execute(region, cancel_event, on_progress):
+        backend.calls.append(region.id)
+        if len(backend.calls) == 1:
+            backend.cleanup_state = CleanupState.PENDING
+            return RouteState.FAILED
+        return RouteState.SUCCEEDED
+
+    backend.execute = execute
+    runtime, _, events = controller(tmp_path, backend=backend)
+    cleaning = threading.Event()
+    runtime.add_listener('state', lambda state: cleaning.set()
+                         if state is RuntimeState.CLEANING else None)
+    runtime.process_text('Đi đến A')
+    assert cleaning.wait(2)
+    backend.resolve()
+    assert runtime.wait(2)
+    assert runtime.state is RuntimeState.ERROR
+    assert events['error'][-1].code == 'nav2_failed'
+    runtime.process_text('Đi đến B')
+    assert runtime.wait(2)
+    assert backend.calls == ['a', 'b']
+    assert runtime.state is RuntimeState.SUCCEEDED
+
+
+def test_cleanup_callbacks_do_not_hold_controller_locks(tmp_path):
+    """Observers can inspect controller admission locks from another thread."""
+    runtime, _, _ = controller(tmp_path)
+    results = []
+
+    def check(_):
+        def probe():
+            for lock in (runtime._processing_lock, runtime._admission):
+                acquired = lock.acquire(timeout=0.1)
+                results.append(acquired)
+                if acquired:
+                    lock.release()
+        worker = threading.Thread(target=probe)
+        worker.start()
+        worker.join(1)
+
+    for event in ('transcript', 'state', 'error'):
+        runtime.add_listener(event, check)
+    runtime.process_text('')
+    assert results == [True] * 6
 
 
 def controller(tmp_path, backend=None, pose=GoalPose(20.0, 20.0, 0.0)):

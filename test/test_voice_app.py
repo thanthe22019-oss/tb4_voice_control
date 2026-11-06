@@ -6,16 +6,16 @@ import threading
 import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 import pytest
 
 from tb4_voice_control.regions import GoalPose
-from tb4_voice_control.route_executor import LegProgress, RouteState
+from tb4_voice_control.route_executor import CleanupState, LegProgress, RouteState
 from tb4_voice_control.runtime_controller import RuntimeController
 from tb4_voice_control.speech import TranscriptionResult
 from tb4_voice_control.voice_app import VoiceControlWindow
 
-from test_runtime_controller import runtime_map
+from test_runtime_controller import CleanupBackend, runtime_map
 
 
 @pytest.mark.parametrize('defect,code', [
@@ -298,3 +298,81 @@ def test_long_inference_defers_close_and_ros_shutdown(app, tmp_path):
     wait_until(app, lambda: shutdown_calls == [True])
     assert not widget._speech_thread.isRunning()
     assert not widget.isVisible()
+
+
+def test_cleanup_pending_keeps_controls_disabled_and_close_deferred(app, tmp_path):
+    """An unresolved cleanup keeps the real window and ROS alive."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    original = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original(*args)
+
+    backend.execute = execute
+    widget, _, _, shutdown_calls = make_window(
+        tmp_path, backend=backend, shutdown_timeout_ms=20)
+    try:
+        widget.text_input.setText('Đi đến B')
+        QTest.mouseClick(widget.send_button, Qt.LeftButton)
+        wait_until(app, lambda: widget._controller.state.value == 'cleaning')
+        app.processEvents()
+        assert not widget.record_button.isEnabled()
+        assert not widget.text_input.isEnabled()
+        assert not widget.send_button.isEnabled()
+        assert not widget.cancel_button.isEnabled()
+        assert not widget.close()
+        assert shutdown_calls == []
+        assert widget.isVisible()
+    finally:
+        backend.resolve()
+        widget.close()
+        wait_until(app, lambda: shutdown_calls == [True])
+
+
+def test_force_abort_requires_warning_and_never_reenables_navigation(
+        app, tmp_path, monkeypatch):
+    """Declining the warning keeps cleanup alive; confirmation permits close."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    original = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original(*args)
+
+    backend.execute = execute
+    widget, _, _, shutdown_calls = make_window(
+        tmp_path, backend=backend, shutdown_timeout_ms=20)
+    choices = iter((QMessageBox.No, QMessageBox.Yes))
+    warnings = []
+
+    def choose(parent, title, message, *args):
+        warnings.append(message)
+        return next(choices)
+
+    monkeypatch.setattr(QMessageBox, 'warning', choose)
+    try:
+        widget.text_input.setText('Đi đến B')
+        QTest.mouseClick(widget.send_button, Qt.LeftButton)
+        wait_until(app, lambda: widget._controller.state.value == 'cleaning')
+        wait_until(app, lambda: widget.force_abort_button.isVisible())
+        QTest.mouseClick(widget.force_abort_button, Qt.LeftButton)
+        assert backend.cleanup_state is CleanupState.PENDING
+        assert 'chưa' in warnings[0].lower()
+        assert not widget.close()
+        assert shutdown_calls == []
+        QTest.mouseClick(widget.force_abort_button, Qt.LeftButton)
+        wait_until(app, lambda: backend.cleanup_state is CleanupState.FORCE_ABORTED)
+        wait_until(app, lambda: widget._controller.state.value == 'error')
+        app.processEvents()
+        assert not widget.record_button.isEnabled()
+        assert not widget.text_input.isEnabled()
+        widget._controller.process_text('Đi đến B')
+        assert backend.calls == ['b']
+        wait_until(app, lambda: shutdown_calls == [True])
+    finally:
+        backend.resolve()
+        widget.close()
+        wait_until(app, lambda: shutdown_calls == [True])

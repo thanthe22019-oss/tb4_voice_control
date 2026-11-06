@@ -10,13 +10,13 @@
 - Repository: `/home/alex/Interaction/tb4_voice_control`
 - Active worktree: `/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`
 - Branch: `feature/implementation`
-- Current code head before this handoff commit: `216d6d1`
+- Task 2 base: `b3dbcb445889eb07b229b7a5ac6701bd81af1e97`; current head includes the Task 2 implementation commit containing this handoff.
 - Base/bootstrap commit: `3161f4d`
 - Source repository copied from: `/home/alex/Interaction/tb4_nav2`
 - Source `tb4_nav2` was intentionally kept unchanged.
 
-Do **not** merge, push, or claim the code scope complete yet. One Important
-Nav2 action-lifecycle finding remains open.
+Do **not** merge, push, or claim final completion yet. Task 2 implementation
+is complete; independent review and fresh controller verification are pending.
 
 ## What is implemented
 
@@ -41,44 +41,27 @@ Nav2 action-lifecycle finding remains open.
 
 ## Last recorded automated evidence
 
-The final fix implementer recorded the following at commit `216d6d1`:
+Task 2 implementation verification with ROS Humble sourced:
 
-- `pytest -q`: 241 passed, 1 skipped.
+- Focused controller and UI: 13 and 14 passed, respectively.
+- `pytest -q`: 262 passed, 1 skipped (two inherited deprecation warnings).
 - `colcon build`: 1 package finished.
-- `colcon test`: 241 passed, 1 skipped.
-- `colcon test-result --verbose`: 242 tests, 0 errors, 0 failures, 1 skipped.
+- `colcon test`: 262 passed, 1 skipped.
+- `colcon test-result --verbose`: 263 tests, 0 errors, 0 failures, 1 skipped.
 
 These are historical results. Run fresh verification before making any new
 completion claim.
 
-## Open Important finding — must fix next
+## Nav2 cleanup lifecycle
 
-The Nav2 backend now bounds server discovery, goal send/accept, result, and
-cancel waits and reports unconfirmed cancellation as failure. However, when a
-send-goal response or cancel response remains pending after the route returns
-`FAILED`, there is no persistent cleanup owner/spinner.
+The backend retains and spins unresolved action cleanup, while the executor
+and UI hold admission and defer ROS shutdown until cleanup is confirmed.
+The operator can explicitly force local cleanup after a warning that remote
+cancellation is unconfirmed; navigation stays disabled for the process.
+The affected route remains failed rather than canceled or succeeded.
 
-Consequences confirmed by the scoped final review:
-
-1. The UI/controller can accept another route while the previous action
-   response is still unresolved.
-2. A late goal acceptance callback only progresses if something later spins
-   the ROS node.
-3. Closing the application can destroy the node before cleanup is confirmed.
-4. A late accepted goal may therefore coexist with a newer goal or remain
-   unconfirmed remotely.
-
-Required behavior for the follow-up fix:
-
-- Retain ownership of unresolved action cleanup after the route worker returns.
-- Continue spinning cleanup safely without concurrent `rclpy` spinning.
-- Reject new route admission while cleanup is unresolved.
-- Keep shutdown from destroying the ROS node while normal cleanup is pending.
-- Define an explicit operator force-abort policy for transport that never
-  responds; never label this state as confirmed cancellation.
-- Re-enable command admission only after a known terminal/cleanup state.
-- Add regression tests proving late acceptance, pending/rejected cancel,
-  second-command rejection, and shutdown behavior.
+Task 1 has passed independent review. Task 2 needs independent review, then
+a fresh whole-plan review and full verification by the controller session.
 
 Relevant files:
 
@@ -111,14 +94,8 @@ source /opt/ros/humble/setup.bash
 Before editing, read this file and the three SDD evidence files listed above.
 Do not reset or discard a dirty worktree. Preserve user changes.
 
-Use TDD for the remaining Nav2 lifecycle issue:
-
-1. Add focused failing tests for cleanup ownership/admission/shutdown.
-2. Confirm the expected RED failure.
-3. Implement the smallest coherent lifecycle fix.
-4. Run the focused tests.
-5. Run the complete proof below.
-6. Request an independent scoped review before declaring completion.
+Review Task 2 and run the complete proof below in the controller session
+before declaring completion.
 
 Complete proof:
 
@@ -154,6 +131,6 @@ Never claim any blocked/manual item passed without new evidence.
 - Local feature branch only; not merged to `main`.
 - No public GitHub repository/remote has been verified.
 - The academic report is not part of the current code milestone.
-- The next milestone is solely the unresolved Nav2 cleanup lifecycle, its
-  tests, independent review, and fresh full verification.
+- The next milestone is independent Task 2 and whole-plan review, followed
+  by fresh full verification.
 

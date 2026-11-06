@@ -1,5 +1,6 @@
 """Orchestrate Vietnamese text to semantic Nav2 routes without a UI."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -9,7 +10,7 @@ from typing import Callable
 from tb4_voice_control.command_parser import CommandError, parse_command
 from tb4_voice_control.map_model import OccupancyMap
 from tb4_voice_control.regions import GoalPose, SemanticMap
-from tb4_voice_control.route_executor import RouteExecutor, RouteState
+from tb4_voice_control.route_executor import CleanupState, RouteExecutor, RouteState
 from tb4_voice_control.route_planner import find_current_region, plan_route
 
 
@@ -18,6 +19,7 @@ class RuntimeState(str, Enum):
 
     IDLE = 'idle'
     NAVIGATING = 'navigating'
+    CLEANING = 'cleaning'
     SUCCEEDED = 'succeeded'
     CANCELED = 'canceled'
     ERROR = 'error'
@@ -52,7 +54,9 @@ class RuntimeController:
         self._current_pose = current_pose or self._poll_current_pose
         self._listeners = {name: [] for name in self.EVENTS}
         self._listener_lock = threading.Lock()
-        self._processing_lock = threading.RLock()
+        self._processing_lock = threading.Condition()
+        self._processing_owner = None
+        self._processing_depth = 0
         self._admission = threading.Condition()
         self._inflight = {}
         self._state_lock = threading.Lock()
@@ -73,7 +77,12 @@ class RuntimeController:
     @property
     def is_busy(self) -> bool:
         """Return whether command admission must remain disabled."""
-        return self.state is RuntimeState.NAVIGATING
+        return self.state in (RuntimeState.NAVIGATING, RuntimeState.CLEANING)
+
+    @property
+    def navigation_disabled(self) -> bool:
+        """Report permanent navigation lockout after forced cleanup."""
+        return getattr(self._executor, 'cleanup_state', None) is CleanupState.FORCE_ABORTED
 
     @property
     def valid_region_names(self) -> tuple[str, ...]:
@@ -102,7 +111,7 @@ class RuntimeController:
     def process_text(self, text: str) -> None:
         """Process diagnostic or speech text through one route path."""
         transcript = str(text or '').strip()
-        with self._processing_lock:
+        with self._serialized_processing():
             if not self._begin_operation():
                 return
             try:
@@ -114,10 +123,20 @@ class RuntimeController:
         """Run one admitted command with callbacks outside admission state."""
         if not self._admission_open():
             return
+        if self.navigation_disabled:
+            self._report_error('cleanup_aborted',
+                               'Chưa xác nhận hủy từ xa; điều hướng đã bị khóa.')
+            return
         self._emit('transcript', transcript)
         if not self._admission_open():
             return
         if self.is_busy:
+            if self.state is RuntimeState.CLEANING:
+                self._report_error(
+                    'cleanup_pending',
+                    'Nav2 đang xử lý hủy; hãy chờ xác nhận trước khi gửi lệnh.',
+                    preserve_state=True)
+                return
             self._report_error(
                 'route_active',
                 'Một lộ trình đang chạy; hãy chờ hoàn tất '
@@ -178,13 +197,31 @@ class RuntimeController:
 
     def report_error(self, code: str, message: str) -> None:
         """Publish microphone/model errors without ever creating a route."""
-        with self._processing_lock:
+        with self._serialized_processing():
             if not self._begin_operation():
                 return
             try:
                 self._report_error(code, message, preserve_state=self.is_busy)
             finally:
                 self._finish_operation()
+
+    @contextmanager
+    def _serialized_processing(self):
+        """Serialize command processing without holding a lock in callbacks."""
+        current = threading.get_ident()
+        with self._processing_lock:
+            while self._processing_owner not in (None, current):
+                self._processing_lock.wait()
+            self._processing_owner = current
+            self._processing_depth += 1
+        try:
+            yield
+        finally:
+            with self._processing_lock:
+                self._processing_depth -= 1
+                if not self._processing_depth:
+                    self._processing_owner = None
+                    self._processing_lock.notify_all()
 
     def close_admission(self) -> None:
         """Reject new work and wait for every other admitted caller."""
@@ -220,6 +257,16 @@ class RuntimeController:
         """Cancel cooperatively; the executor owns terminal state."""
         self._executor.cancel()
 
+    def force_abort_cleanup(self) -> bool:
+        """Explicitly abandon local cleanup and retain an indeterminate error."""
+        if self.state is not RuntimeState.CLEANING:
+            return False
+        aborted = self._executor.force_abort_cleanup()
+        if aborted:
+            self._report_error('cleanup_aborted',
+                               'Chưa xác nhận hủy từ xa; điều hướng đã bị khóa.')
+        return aborted
+
     def wait(self, timeout: float | None = None) -> bool:
         """Bound shutdown joins using the executor's non-recursive wait API."""
         return self._executor.wait(timeout)
@@ -250,13 +297,19 @@ class RuntimeController:
     def _route_state_changed(self, route_state: RouteState) -> None:
         if route_state is RouteState.RUNNING:
             self._set_state(RuntimeState.NAVIGATING)
+        elif route_state is RouteState.CLEANING:
+            self._set_state(RuntimeState.CLEANING)
         elif route_state is RouteState.SUCCEEDED:
             self._set_state(RuntimeState.SUCCEEDED)
         elif route_state is RouteState.CANCELED:
             self._set_state(RuntimeState.CANCELED)
         elif route_state is RouteState.FAILED:
-            self._report_error('nav2_failed',
-                               'Nav2 không hoàn thành được lộ trình.')
+            if self.navigation_disabled:
+                self._report_error('cleanup_aborted',
+                                   'Chưa xác nhận hủy từ xa; điều hướng đã bị khóa.')
+            else:
+                self._report_error('nav2_failed',
+                                   'Nav2 không hoàn thành được lộ trình.')
 
     def _set_state(self, state: RuntimeState) -> None:
         with self._state_lock:

@@ -3,11 +3,12 @@
 import argparse
 from pathlib import Path
 import sys
+import threading
 
 from PyQt5.QtCore import pyqtSignal, QThread, QTimer
 from PyQt5.QtWidgets import (
     QApplication, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget)
+    QMainWindow, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget)
 
 from tb4_voice_control.audio_capture import AudioRecorder
 from tb4_voice_control.command_parser import Intent
@@ -77,6 +78,8 @@ class VoiceControlWindow(QMainWindow):
         self.send_button = QPushButton('Gửi lệnh văn bản')
         self.cancel_button = QPushButton('Hủy lộ trình')
         self.cancel_button.setEnabled(False)
+        self.force_abort_button = QPushButton('Buộc dừng chờ Nav2')
+        self.force_abort_button.hide()
 
         root = QWidget()
         layout = QVBoxLayout(root)
@@ -100,6 +103,7 @@ class VoiceControlWindow(QMainWindow):
         controls = QHBoxLayout()
         controls.addWidget(self.record_button)
         controls.addWidget(self.cancel_button)
+        controls.addWidget(self.force_abort_button)
         layout.addLayout(controls)
         text_controls = QHBoxLayout()
         text_controls.addWidget(self.text_input, 1)
@@ -139,6 +143,18 @@ class VoiceControlWindow(QMainWindow):
         self.send_button.clicked.connect(self._submit_text)
         self.text_input.returnPressed.connect(self._submit_text)
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        self.force_abort_button.clicked.connect(self._force_abort)
+
+    def _force_abort(self):
+        if QMessageBox.warning(
+                self, 'Chưa xác nhận hủy',
+                'Nav2 chưa xác nhận hủy từ xa. Buộc dừng sẽ khóa điều hướng '
+                'trong phiên này. Tiếp tục?',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.force_abort_button.setEnabled(False)
+        threading.Thread(target=self._controller.force_abort_cleanup,
+                         daemon=True).start()
 
     def _submit_text(self):
         self.text_requested.emit(self.text_input.text())
@@ -184,13 +200,17 @@ class VoiceControlWindow(QMainWindow):
 
     def _show_state(self, state: RuntimeState):
         navigating = state is RuntimeState.NAVIGATING
-        self.record_button.setEnabled(not navigating)
-        self.text_input.setEnabled(not navigating)
-        self.send_button.setEnabled(not navigating)
+        busy = (navigating or state is RuntimeState.CLEANING
+                or self._shutdown_started or self._controller.navigation_disabled)
+        self.record_button.setEnabled(not busy)
+        self.text_input.setEnabled(not busy)
+        self.send_button.setEnabled(not busy)
         self.cancel_button.setEnabled(navigating)
+        self.force_abort_button.setVisible(state is RuntimeState.CLEANING)
         labels = {
             RuntimeState.IDLE: 'Sẵn sàng nhận lệnh',
             RuntimeState.NAVIGATING: 'Robot đang di chuyển',
+            RuntimeState.CLEANING: 'Đang chờ Nav2 xác nhận xử lý hủy',
             RuntimeState.SUCCEEDED: 'Điều hướng thành công',
             RuntimeState.CANCELED: 'Đã hủy lộ trình',
             RuntimeState.ERROR: 'Có lỗi — chưa gửi thêm goal',
