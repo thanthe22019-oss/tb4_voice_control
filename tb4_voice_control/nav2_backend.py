@@ -14,7 +14,7 @@ import rclpy
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from tb4_voice_control.regions import GoalPose
-from tb4_voice_control.route_executor import LegProgress, RouteState
+from tb4_voice_control.route_executor import CleanupState, LegProgress, RouteState
 
 
 def _stopped(cancel_event):
@@ -94,11 +94,11 @@ def wait_for_nav2(navigator, timeout, cancel_event=None):
 
 
 def navigate_one_goal(navigator, frame_id, goal, timeout, feedback_period,
-                      cancel_event=None, on_progress=None):
+                      cancel_event=None, on_progress=None, on_unresolved=None):
     """Execute a ready goal; cancel on deadline, shutdown, or cooperative request."""
     if hasattr(navigator.nav_to_pose_client, 'send_goal_async'):
         return _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
-                                cancel_event, on_progress)
+                                cancel_event, on_progress, on_unresolved)
     if _stopped(cancel_event):
         return TaskResult.CANCELED
     coordinates = getattr(goal, 'goal', goal)
@@ -138,7 +138,7 @@ def navigate_one_goal(navigator, frame_id, goal, timeout, feedback_period,
 
 
 def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
-                     cancel_event, on_progress):
+                     cancel_event, on_progress, on_unresolved=None):
     """Own Humble action futures; unresolved cleanup is reported as failure."""
     deadline = time.monotonic() + timeout
     client = navigator.nav_to_pose_client
@@ -170,7 +170,10 @@ def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
             break
         rclpy.spin_until_future_complete(navigator, send, timeout_sec=min(0.1, remaining))
     if not send.done() or _stopped(cancel_event):
-        send.add_done_callback(cancel_late)
+        if on_unresolved is None:
+            send.add_done_callback(cancel_late)
+        else:
+            on_unresolved(send, None, None)
         navigator.error('Goal acceptance unresolved; cancellation outcome is indeterminate.')
         return TaskResult.FAILED
     handle = send.result()
@@ -203,11 +206,15 @@ def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
     while not cancel.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
         rclpy.spin_until_future_complete(navigator, cancel, timeout_sec=0.1)
     if not cancel.done() or not cancel.result().goals_canceling:
+        if on_unresolved is not None:
+            on_unresolved(None, cancel, result)
         navigator.error('Goal cancellation rejected or unconfirmed.')
         return TaskResult.FAILED
     while not result.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
         rclpy.spin_until_future_complete(navigator, result, timeout_sec=0.1)
     if not result.done() or result.result().status != GoalStatus.STATUS_CANCELED:
+        if on_unresolved is not None:
+            on_unresolved(None, cancel, result)
         navigator.error('Goal cancellation terminal result is unconfirmed.')
         return TaskResult.FAILED
     return TaskResult.CANCELED if canceled_by_user else TaskResult.FAILED
@@ -239,6 +246,9 @@ class BasicNavigatorBackend:
         self._io_lock = threading.Lock()
         self._io_condition = threading.Condition(self._io_lock)
         self._io_busy = False
+        self._cleanup_state = CleanupState.QUIESCENT
+        self._cleanup_force = threading.Event()
+        self._cleanup_worker = None
         self._pose_subscription = self.navigator.create_subscription(
             PoseWithCovarianceStamped, 'amcl_pose', self._receive_pose,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -266,7 +276,8 @@ class BasicNavigatorBackend:
     def poll_pose(self, timeout=0.0) -> GoalPose | None:
         """Spin idle localization without competing with a running navigation leg."""
         with self._io_condition:
-            available = not self._io_busy
+            available = (not self._io_busy
+                         and self._cleanup_state is CleanupState.QUIESCENT)
             if available:
                 self._io_busy = True
         if available:
@@ -284,7 +295,79 @@ class BasicNavigatorBackend:
     def _release_io(self):
         with self._io_condition:
             self._io_busy = False
-            self._io_condition.notify()
+            self._io_condition.notify_all()
+
+    @property
+    def cleanup_state(self):
+        """Return the state of unresolved action cleanup."""
+        with self._io_condition:
+            return self._cleanup_state
+
+    def wait_for_cleanup(self, timeout=None):
+        """Wait for cleanup to resolve or be explicitly abandoned."""
+        with self._io_condition:
+            self._io_condition.wait_for(
+                lambda: self._cleanup_state is not CleanupState.PENDING, timeout)
+            return self._cleanup_state
+
+    def force_abort_cleanup(self):
+        """Abandon local cleanup permanently after the operator requests it."""
+        with self._io_condition:
+            if self._cleanup_state is not CleanupState.PENDING:
+                return False
+            self._cleanup_force.set()
+            worker = self._cleanup_worker
+        if worker is not threading.current_thread():
+            worker.join()
+        return True
+
+    def _start_cleanup(self, send, cancel, result):
+        # The executing thread still owns I/O during this transfer.
+        with self._io_condition:
+            self._cleanup_state = CleanupState.PENDING
+            self._cleanup_worker = threading.Thread(
+                target=self._clean_action, args=(send, cancel, result),
+                name='nav2-cleanup', daemon=True)
+            self._cleanup_worker.start()
+
+    def _clean_action(self, send, cancel, result):
+        confirmed = False
+        with self._claim_io():
+            try:
+                while not self._cleanup_force.is_set():
+                    if send is not None and send.done():
+                        handle = send.result()
+                        send = None
+                        if handle is None or not handle.accepted:
+                            confirmed = True
+                            break
+                        result = handle.get_result_async()
+                        cancel = handle.cancel_goal_async()
+                    if send is None and result.done():
+                        status = result.result().status
+                        if status in (GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED):
+                            confirmed = True
+                            break
+                        if (status == GoalStatus.STATUS_CANCELED and cancel.done()
+                                and cancel.result().goals_canceling):
+                            confirmed = True
+                            break
+                    future = send if send is not None else cancel if not cancel.done() else result
+                    if rclpy.ok():
+                        rclpy.spin_until_future_complete(
+                            self.navigator, future, timeout_sec=0.1)
+                        if future.done():
+                            self._cleanup_force.wait(0.01)
+                    else:
+                        self._cleanup_force.wait(0.1)
+            except Exception:
+                # Transport errors leave the remote action indeterminate.
+                self._cleanup_force.wait()
+        with self._io_condition:
+            self._cleanup_state = (CleanupState.FORCE_ABORTED if self._cleanup_force.is_set()
+                                   else CleanupState.QUIESCENT if confirmed
+                                   else CleanupState.PENDING)
+            self._io_condition.notify_all()
 
     @contextmanager
     def _claim_io(self):
@@ -299,17 +382,25 @@ class BasicNavigatorBackend:
 
     def wait_until_ready(self, cancel_event=None) -> bool:
         """Expose the same readiness gate to the CLI before its first leg."""
+        if self.cleanup_state is not CleanupState.QUIESCENT:
+            return False
         with self._claim_io():
+            if self.cleanup_state is not CleanupState.QUIESCENT:
+                return False
             return wait_for_nav2(self.navigator, self.nav2_timeout, cancel_event)
 
     def execute(self, region, cancel_event, on_progress) -> RouteState:
         """Run one region only after all readiness dependencies are available."""
+        if self.cleanup_state is not CleanupState.QUIESCENT:
+            return RouteState.FAILED
         with self._claim_io():
+            if self.cleanup_state is not CleanupState.QUIESCENT:
+                return RouteState.FAILED
             if not wait_for_nav2(self.navigator, self.nav2_timeout, cancel_event):
                 return (RouteState.CANCELED if _stopped(cancel_event)
                         else RouteState.FAILED)
             result = navigate_one_goal(
                 self.navigator, self.frame_id, region, self.goal_timeout,
-                self.feedback_period, cancel_event, on_progress)
+                self.feedback_period, cancel_event, on_progress, self._start_cleanup)
         return {TaskResult.SUCCEEDED: RouteState.SUCCEEDED,
                 TaskResult.CANCELED: RouteState.CANCELED}.get(result, RouteState.FAILED)

@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from tb4_voice_control.regions import GoalPose, Region
-from tb4_voice_control.route_executor import LegProgress, RouteExecutor, RouteState
+from tb4_voice_control.route_executor import CleanupState, LegProgress, RouteExecutor, RouteState
 
 
 def regions():
@@ -187,3 +187,88 @@ def test_executor_import_has_no_ros_or_qt_dependency():
                              '"geometry_msgs", "nav2_")) for name in sys.modules)'],
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+class CleanupBackend(Backend):
+    """Hold an unresolved transport until the test confirms or aborts it."""
+
+    def __init__(self):
+        super().__init__(RouteState.FAILED)
+        self.condition = threading.Condition()
+        self.cleanup_state = CleanupState.QUIESCENT
+
+    def execute(self, region, cancel_event, on_progress):
+        with self.condition:
+            self.cleanup_state = CleanupState.PENDING
+        return super().execute(region, cancel_event, on_progress)
+
+    def wait_for_cleanup(self, timeout=None):
+        with self.condition:
+            self.condition.wait_for(lambda: self.cleanup_state is not CleanupState.PENDING,
+                                    timeout)
+            return self.cleanup_state
+
+    def finish(self, state):
+        with self.condition:
+            self.cleanup_state = state
+            self.condition.notify_all()
+
+    def force_abort_cleanup(self):
+        self.finish(CleanupState.FORCE_ABORTED)
+        return True
+
+
+def test_cleanup_pending_keeps_executor_cleaning_and_rejects_second_route():
+    """A failed route cannot release admission before cleanup confirms terminal state."""
+    backend = CleanupBackend()
+    cleaning = threading.Event()
+    states = []
+
+    def observe(state):
+        states.append(state)
+        if state.name == 'CLEANING':
+            cleaning.set()
+
+    executor = RouteExecutor(backend, regions(), on_state=observe)
+    assert executor.start(('a',))
+    try:
+        assert cleaning.wait(1)
+        assert executor.cleanup_state is CleanupState.PENDING
+        assert not executor.start(('b',))
+        assert not executor.wait(0.01)
+        assert backend.calls == ['a']
+    finally:
+        backend.finish(CleanupState.QUIESCENT)
+        executor.wait(1)
+    assert [state.name for state in states] == ['RUNNING', 'CLEANING', 'FAILED']
+
+
+def test_confirmed_cleanup_finishes_failed_route_and_allows_retry():
+    backend = CleanupBackend()
+    cleaning = threading.Event()
+    executor = RouteExecutor(backend, regions(), on_state=lambda state:
+                             cleaning.set() if state.name == 'CLEANING' else None)
+    assert executor.start(('a',))
+    assert cleaning.wait(1)
+    assert not executor.wait(0.01)
+    backend.finish(CleanupState.QUIESCENT)
+    assert executor.wait(1)
+    assert executor.state is RouteState.FAILED
+    backend.entered.clear()
+    assert executor.start(('b',))
+    assert backend.entered.wait(1)
+    backend.finish(CleanupState.QUIESCENT)
+    assert executor.wait(1)
+
+
+def test_force_abort_finishes_wait_but_never_restores_route_admission():
+    backend = CleanupBackend()
+    executor = RouteExecutor(backend, regions())
+    assert executor.start(('a',))
+    assert backend.entered.wait(1)
+    assert executor.force_abort_cleanup()
+    assert executor.wait(1)
+    assert executor.state is RouteState.FAILED
+    assert executor.cleanup_state is CleanupState.FORCE_ABORTED
+    assert not executor.start(('b',))
+    assert backend.calls == ['a']
