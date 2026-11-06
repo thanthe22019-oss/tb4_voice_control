@@ -351,3 +351,136 @@ def test_unconfirmed_cancel_is_failure(ros, cancel_response):
             is TaskResult.FAILED
     finally:
         nav2_backend.rclpy.spin_until_future_complete = monkey
+
+
+def test_late_acceptance_is_owned_until_confirmed_terminal_cancel(monkeypatch):
+    """Dropping the send future or skipping cancel/result verification blocks retry."""
+    navigator = Navigator()
+    send, cancel, result = Future(), Future(), Future()
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result,
+                             cancel_goal_async=lambda: cancel)
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: send
+    navigator._feedbackCallback = lambda message: None
+    spinning = threading.Event()
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+
+    def spin(node, future, timeout_sec):
+        spinning.set()
+        threading.Event().wait(min(timeout_sec, 0.002))
+
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete', spin)
+    backend = BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    assert backend.cleanup_state.name == 'PENDING'
+    spinning.clear()
+    assert spinning.wait(1)
+    send.resolve(handle)
+    cancel.resolve(SimpleNamespace(goals_canceling=[object()]))
+    assert backend.wait_for_cleanup(0.02).name == 'PENDING'
+    result.resolve(SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+    assert backend.wait_for_cleanup(1).name == 'QUIESCENT'
+
+
+@pytest.mark.parametrize('response', [None, SimpleNamespace(goals_canceling=[])])
+def test_pending_or_rejected_cancel_keeps_backend_cleanup_pending(monkeypatch, response):
+    """A missing or rejected cancel cannot be mistaken for confirmed cleanup."""
+    navigator = Navigator()
+    result = Future()
+    cancel = Future(response, done=response is not None)
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result,
+                             cancel_goal_async=lambda: cancel)
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: Future(handle, done=True)
+    navigator._feedbackCallback = lambda message: None
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete',
+                        lambda *args, **kwargs: threading.Event().wait(0.002))
+    backend = BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    assert backend.wait_for_cleanup(0.03).name == 'PENDING'
+    assert backend.force_abort_cleanup()
+
+
+def test_force_abort_releases_waiter_but_permanently_disables_admission(monkeypatch):
+    """Force releases pending waiters but neither readiness nor execution can dispatch."""
+    navigator = Navigator()
+    sent = []
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: (sent.append(1) or Future())
+    navigator._feedbackCallback = lambda message: None
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete',
+                        lambda *args, **kwargs: threading.Event().wait(0.002))
+    backend = BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    assert backend.force_abort_cleanup()
+    assert backend.wait_for_cleanup(1).name == 'FORCE_ABORTED'
+    assert not backend.wait_until_ready()
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    assert sent == [1]
+
+
+def test_cleanup_worker_never_spins_concurrently_with_navigation_or_pose_poll(monkeypatch):
+    """Pose polling and a competing execute must not spin or dispatch during cleanup."""
+    navigator = Navigator()
+    send = Future()
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: send
+    navigator._feedbackCallback = lambda message: None
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+    in_spin = threading.Lock()
+    overlap = []
+    entered = threading.Event()
+
+    def spin(*args, **kwargs):
+        if not in_spin.acquire(blocking=False):
+            overlap.append(True)
+            return
+        entered.set()
+        threading.Event().wait(0.002)
+        in_spin.release()
+
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete', spin)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_once', spin)
+    backend = BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    entered.clear()
+    assert entered.wait(1)
+    backend.poll_pose()
+    competitor = threading.Thread(target=backend.execute,
+                                  args=(region(), threading.Event(), None))
+    competitor.start()
+    assert backend.force_abort_cleanup()
+    competitor.join(1)
+    assert not competitor.is_alive()
+    assert not overlap
+
+
+def test_cleanup_handoff_gates_poll_and_execute_before_worker_claims_io(monkeypatch):
+    """Cleanup ownership starts before the worker is scheduled to claim I/O."""
+    navigator = Navigator()
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: Future()
+    navigator._feedbackCallback = lambda message: None
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete',
+                        lambda *args, **kwargs: threading.Event().wait(0.002))
+    polls = []
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_once', lambda *args, **kwargs: polls.append(1))
+    backend = BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    allow = threading.Event()
+    original = backend._clean_action
+
+    def delayed(*args):
+        allow.wait(1)
+        original(*args)
+
+    monkeypatch.setattr(backend, '_clean_action', delayed)
+    assert backend.execute(region(), threading.Event(), None) is RouteState.FAILED
+    try:
+        backend.poll_pose()
+        assert polls == []
+    finally:
+        allow.set()
+        backend.force_abort_cleanup()

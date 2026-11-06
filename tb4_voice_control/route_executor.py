@@ -9,11 +9,20 @@ from typing import Callable, Protocol
 from tb4_voice_control.regions import Region
 
 
+class CleanupState(Enum):
+    """Whether the backend can safely admit another navigation request."""
+
+    QUIESCENT = 'quiescent'
+    PENDING = 'pending'
+    FORCE_ABORTED = 'force_aborted'
+
+
 class RouteState(Enum):
     """Observable route lifecycle; terminal routes may accept a new command."""
 
     IDLE = 'idle'
     RUNNING = 'running'
+    CLEANING = 'cleaning'
     SUCCEEDED = 'succeeded'
     FAILED = 'failed'
     CANCELED = 'canceled'
@@ -61,10 +70,21 @@ class RouteExecutor:
         with self._lock:
             return self._state
 
+    @property
+    def cleanup_state(self) -> CleanupState:
+        """Support both cleanup-aware backends and simple legacy doubles."""
+        return getattr(self._backend, 'cleanup_state', CleanupState.QUIESCENT)
+
+    def force_abort_cleanup(self) -> bool:
+        """Request explicit local abandonment of unresolved cleanup."""
+        abort = getattr(self._backend, 'force_abort_cleanup', None)
+        return abort() if abort is not None else False
+
     def start(self, region_ids: tuple[str, ...]) -> bool:
         """Start a route asynchronously, rejecting admission while RUNNING."""
         with self._lock:
-            if self._state is RouteState.RUNNING:
+            if ((self._worker is not None and self._worker.is_alive())
+                    or self.cleanup_state is not CleanupState.QUIESCENT):
                 return False
             unknown = [identifier for identifier in region_ids
                        if identifier not in self._regions]
@@ -128,6 +148,11 @@ class RouteExecutor:
         except Exception:
             logging.getLogger(__name__).exception('Route backend failed')
             result = RouteState.FAILED
+        if result is RouteState.FAILED and self.cleanup_state is CleanupState.PENDING:
+            with self._lock:
+                self._state = RouteState.CLEANING
+            self._notify(self._on_state, RouteState.CLEANING)
+            self._backend.wait_for_cleanup(None)
         with self._lock:
             if cancel_event.is_set() and result is RouteState.SUCCEEDED:
                 result = RouteState.CANCELED
