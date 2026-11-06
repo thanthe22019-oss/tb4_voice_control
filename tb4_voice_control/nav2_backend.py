@@ -1,6 +1,7 @@
 """ROS/Nav2 readiness, planar pose conversion, and blocking leg execution."""
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import math
 import threading
 import time
@@ -19,6 +20,15 @@ from tb4_voice_control.route_executor import CleanupState, LegProgress, RouteSta
 
 def _stopped(cancel_event):
     return not rclpy.ok() or (cancel_event is not None and cancel_event.is_set())
+
+
+@dataclass
+class _ActionCleanup:
+    send: object = None
+    handle: object = None
+    cancel: object = None
+    result: object = None
+    owned: bool = False
 
 
 def goal_to_pose(navigator, frame_id, goal):
@@ -153,7 +163,23 @@ def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
         return TaskResult.CANCELED
     message = NavigateToPose.Goal()
     message.pose = goal_to_pose(navigator, frame_id, goal)
-    send = client.send_goal_async(message, navigator._feedbackCallback)
+    action = _ActionCleanup()
+    try:
+        action.send = client.send_goal_async(message, navigator._feedbackCallback)
+        return _finish_action(navigator, action, deadline, timeout, feedback_period,
+                              goal, cancel_event, on_progress, on_unresolved)
+    except Exception as error:
+        if on_unresolved is None:
+            raise
+        if not action.owned:
+            on_unresolved(action)
+        navigator.error(f'Action transport failed; cleanup remains pending: {error}')
+        return TaskResult.FAILED
+
+
+def _finish_action(navigator, action, deadline, timeout, feedback_period,
+                   goal, cancel_event, on_progress, on_unresolved):
+    send = action.send
 
     def cancel_late(future):
         try:
@@ -173,14 +199,16 @@ def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
         if on_unresolved is None:
             send.add_done_callback(cancel_late)
         else:
-            on_unresolved(send, None, None)
+            on_unresolved(action)
         navigator.error('Goal acceptance unresolved; cancellation outcome is indeterminate.')
         return TaskResult.FAILED
     handle = send.result()
+    action.handle = handle
     if handle is None or not handle.accepted:
         navigator.error('Goal was rejected by Nav2.')
         return TaskResult.FAILED
     result = handle.get_result_async()
+    action.result = result
     next_feedback = time.monotonic() + feedback_period
     while not result.done() and not _stopped(cancel_event):
         remaining = deadline - time.monotonic()
@@ -198,23 +226,29 @@ def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
             next_feedback = now + feedback_period
     if result.done():
         status = result.result().status
+        if status not in (GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED,
+                          GoalStatus.STATUS_CANCELED):
+            if on_unresolved is not None:
+                on_unresolved(action)
+            return TaskResult.FAILED
         return {GoalStatus.STATUS_SUCCEEDED: TaskResult.SUCCEEDED,
                 GoalStatus.STATUS_CANCELED: TaskResult.CANCELED}.get(status, TaskResult.FAILED)
     canceled_by_user = _stopped(cancel_event)
     cancel = handle.cancel_goal_async()
+    action.cancel = cancel
     cleanup_deadline = time.monotonic() + min(timeout, 1.0)
     while not cancel.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
         rclpy.spin_until_future_complete(navigator, cancel, timeout_sec=0.1)
     if not cancel.done() or not cancel.result().goals_canceling:
         if on_unresolved is not None:
-            on_unresolved(None, cancel, result)
+            on_unresolved(action)
         navigator.error('Goal cancellation rejected or unconfirmed.')
         return TaskResult.FAILED
     while not result.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
         rclpy.spin_until_future_complete(navigator, result, timeout_sec=0.1)
     if not result.done() or result.result().status != GoalStatus.STATUS_CANCELED:
         if on_unresolved is not None:
-            on_unresolved(None, cancel, result)
+            on_unresolved(action)
         navigator.error('Goal cancellation terminal result is unconfirmed.')
         return TaskResult.FAILED
     return TaskResult.CANCELED if canceled_by_user else TaskResult.FAILED
@@ -321,48 +355,60 @@ class BasicNavigatorBackend:
             worker.join()
         return True
 
-    def _start_cleanup(self, send, cancel, result):
+    def _start_cleanup(self, action):
         # The executing thread still owns I/O during this transfer.
         with self._io_condition:
+            action.owned = True
             self._cleanup_state = CleanupState.PENDING
             self._cleanup_worker = threading.Thread(
-                target=self._clean_action, args=(send, cancel, result),
+                target=self._clean_action, args=(action,),
                 name='nav2-cleanup', daemon=True)
             self._cleanup_worker.start()
 
-    def _clean_action(self, send, cancel, result):
+    def _clean_action(self, action):
         confirmed = False
         with self._claim_io():
-            try:
-                while not self._cleanup_force.is_set():
-                    if send is not None and send.done():
-                        handle = send.result()
-                        send = None
-                        if handle is None or not handle.accepted:
+            while not self._cleanup_force.is_set():
+                try:
+                    if action.handle is None and action.send is not None and action.send.done():
+                        action.handle = action.send.result()
+                        if action.handle is None or not action.handle.accepted:
                             confirmed = True
                             break
-                        result = handle.get_result_async()
-                        cancel = handle.cancel_goal_async()
-                    if send is None and result.done():
-                        status = result.result().status
+                    if action.handle is not None and action.result is None:
+                        action.result = action.handle.get_result_async()
+                    cancel_acknowledged = False
+                    if action.cancel is not None and action.cancel.done():
+                        try:
+                            cancel_acknowledged = bool(action.cancel.result().goals_canceling)
+                        except Exception:
+                            action.cancel = None
+                    if action.result is not None and action.result.done():
+                        status = action.result.result().status
                         if status in (GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED):
                             confirmed = True
                             break
-                        if (status == GoalStatus.STATUS_CANCELED and cancel.done()
-                                and cancel.result().goals_canceling):
+                        if status == GoalStatus.STATUS_CANCELED and cancel_acknowledged:
                             confirmed = True
                             break
-                    future = send if send is not None else cancel if not cancel.done() else result
-                    if rclpy.ok():
+                    if action.handle is not None and action.cancel is None:
+                        try:
+                            action.cancel = action.handle.cancel_goal_async()
+                        except Exception:
+                            pass
+                    future = (action.send if action.handle is None else
+                              action.cancel if action.cancel is not None and
+                              not action.cancel.done() else action.result)
+                    if rclpy.ok() and future is not None:
                         rclpy.spin_until_future_complete(
                             self.navigator, future, timeout_sec=0.1)
                         if future.done():
                             self._cleanup_force.wait(0.01)
                     else:
                         self._cleanup_force.wait(0.1)
-            except Exception:
-                # Transport errors leave the remote action indeterminate.
-                self._cleanup_force.wait()
+                except Exception:
+                    # Retry transient transport failures without surrendering ownership.
+                    self._cleanup_force.wait(0.1)
         with self._io_condition:
             self._cleanup_state = (CleanupState.FORCE_ABORTED if self._cleanup_force.is_set()
                                    else CleanupState.QUIESCENT if confirmed

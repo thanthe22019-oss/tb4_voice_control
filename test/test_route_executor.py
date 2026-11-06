@@ -272,3 +272,47 @@ def test_force_abort_finishes_wait_but_never_restores_route_admission():
     assert executor.cleanup_state is CleanupState.FORCE_ABORTED
     assert not executor.start(('b',))
     assert backend.calls == ['a']
+
+
+def test_cancel_transport_exception_keeps_real_backend_executor_cleaning(monkeypatch):
+    """A transport exception after dispatch keeps the real route worker admitted."""
+    from types import SimpleNamespace
+    from test_nav2_backend import Future, Navigator
+    from tb4_voice_control import nav2_backend
+
+    navigator = Navigator()
+    result = Future()
+
+    def cancel():
+        raise RuntimeError('cancel transport failed')
+
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result,
+                             cancel_goal_async=cancel)
+    sends = []
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: (
+        sends.append(1) or Future(handle, done=True))
+    navigator._feedbackCallback = lambda message: None
+    monkeypatch.setattr(nav2_backend.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(nav2_backend, 'wait_for_nav2', lambda *args: True)
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete',
+                        lambda *args, **kwargs: threading.Event().wait(0.002))
+    backend = nav2_backend.BasicNavigatorBackend(navigator, goal_timeout=0.02)
+    cleaning = threading.Event()
+    executor = RouteExecutor(backend, regions(), on_state=lambda state:
+                             cleaning.set() if state is RouteState.CLEANING else None)
+    assert executor.start(('a',))
+    try:
+        assert cleaning.wait(1)
+        assert executor.cleanup_state is CleanupState.PENDING
+        assert not executor.wait(0.02)
+        assert not executor.start(('b',))
+        assert not backend.wait_until_ready()
+        assert sends == [1]
+        assert executor.force_abort_cleanup()
+        assert executor.wait(1)
+        assert executor.state is RouteState.FAILED
+        assert executor.cleanup_state is CleanupState.FORCE_ABORTED
+        assert not executor.start(('b',))
+    finally:
+        backend.force_abort_cleanup()
+        executor.wait(1)
