@@ -10,14 +10,15 @@
 - Repository: `/home/alex/Interaction/tb4_voice_control`
 - Active worktree: `/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`
 - Branch: `feature/implementation`
-- Task 2 base: `b3dbcb445889eb07b229b7a5ac6701bd81af1e97`; current head includes the Task 2 implementation commit containing this handoff.
+- Reviewed implementation head: `26c79e5203bd72935a8644f03cfa7482f292f7cb` (`fix: preserve cleanup ownership through finalization`).
 - Base/bootstrap commit: `3161f4d`
 - Source repository copied from: `/home/alex/Interaction/tb4_nav2`
 - Source `tb4_nav2` was intentionally kept unchanged.
 
-Do **not** merge, push, or claim final completion yet. Task 2 review found a
-modal cleanup race; its fix requires independent review and fresh controller
-verification.
+The cleanup-lifecycle code milestone has passed task reviews, final whole-plan
+review plus scoped fix re-review, and fresh controller verification. Do **not**
+claim the external hardware/live-simulation/GitHub items below are complete,
+and do not merge or push without the user's explicit next-step choice.
 
 ## What is implemented
 
@@ -39,19 +40,24 @@ verification.
   demo checklist, test matrix, and six console entry points.
 - Runtime semantic-map validation, missing-localization error/retry behavior,
   integer YAML coordinate conversion, and bounded Nav2 action waits.
+- Persistent Nav2 cleanup ownership across late action acceptance, unresolved
+  cancellation, CLI finalization, and warned operator force-abort.
+- Cleanup-aware route admission and UI shutdown, including terminal-callback
+  re-entry and exactly-once queued-close handling.
 
 ## Last recorded automated evidence
 
-Task 2 fix round 1 verification with ROS Humble sourced:
+Fresh controller verification on reviewed implementation head `26c79e5`, with
+ROS Humble sourced and Qt offscreen:
 
-- Focused controller and UI: 29 passed combined.
-- `pytest -q`: 264 passed, 1 skipped (two inherited deprecation warnings).
+- `pytest -q`: 271 passed, 1 skipped (two inherited deprecation warnings).
 - `colcon build`: 1 package finished.
-- `colcon test`: 264 passed, 1 skipped.
-- `colcon test-result --verbose`: 265 tests, 0 errors, 0 failures, 1 skipped.
+- `colcon test`: 271 passed, 1 skipped.
+- `colcon test-result --verbose`: 272 tests, 0 errors, 0 failures, 1 skipped.
+- `git diff --check`: clean.
 
-These are historical results. Run fresh verification before making any new
-completion claim.
+These results were recorded on 2026-11-06 by the controller after the scoped
+fix re-review. Run fresh verification again after any code change.
 
 ## Nav2 cleanup lifecycle
 
@@ -61,8 +67,9 @@ The operator can explicitly force local cleanup after a warning that remote
 cancellation is unconfirmed; navigation stays disabled for the process.
 The affected route remains failed rather than canceled or succeeded.
 
-Task 1 has passed independent review. Task 2 fix round 1 needs independent
-review, then a fresh whole-plan review and full controller verification.
+Task 1 and Task 2 passed independent review. The final whole-plan review found
+three integration issues; commit `26c79e5` fixed all three, and the scoped
+re-review marked every finding ADDRESSED with no new Critical/Important issue.
 
 Relevant files:
 
@@ -71,10 +78,12 @@ Relevant files:
 - `tb4_voice_control/runtime_controller.py`
 - `tb4_voice_control/qt_workers.py`
 - `tb4_voice_control/voice_app.py`
+- `tb4_voice_control/navigate_goals.py`
 - `test/test_nav2_backend.py`
 - `test/test_route_executor.py`
 - `test/test_runtime_controller.py`
 - `test/test_voice_app.py`
+- `test/test_navigate_goals.py`
 
 Review evidence (ignored SDD workspace):
 
@@ -82,6 +91,8 @@ Review evidence (ignored SDD workspace):
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-1-review.md`
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-2-report.md`
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-2-review.md`
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/final-review.md`
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/final-fix-report.md`
 
 Earlier milestone history:
 
@@ -99,13 +110,13 @@ git log -8 --oneline
 source /opt/ros/humble/setup.bash
 ```
 
-Before editing, read this file and the current cleanup lifecycle ledger,
-Task 1 review, Task 2 report and review listed above; retain the earlier
-milestone evidence for historical context.
+Before editing, read this file, the current cleanup lifecycle ledger, and the
+final review/fix report listed above; retain earlier milestone evidence for
+historical context.
 Do not reset or discard a dirty worktree. Preserve user changes.
 
-Review Task 2 and run the complete proof below in the controller session
-before declaring completion.
+After any code change, run the complete proof below before making a new
+completion claim.
 
 Complete proof:
 
@@ -141,6 +152,8 @@ Never claim any blocked/manual item passed without new evidence.
 - Local feature branch only; not merged to `main`.
 - No public GitHub repository/remote has been verified.
 - The academic report is not part of the current code milestone.
-- The next milestone is independent Task 2 and whole-plan review, followed
-  by fresh full verification.
+- Cleanup-lifecycle implementation/review/automated verification is complete
+  locally. The next milestone is live simulator/hardware acceptance, NVIDIA
+  and microphone validation when available, then GitHub publication when
+  authentication/remote access is ready.
 
