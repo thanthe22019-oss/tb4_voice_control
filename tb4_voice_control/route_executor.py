@@ -129,7 +129,7 @@ class RouteExecutor:
             logging.getLogger(__name__).exception('Route backend failed')
             result = RouteState.FAILED
         with self._lock:
-            if cancel_event.is_set():
+            if cancel_event.is_set() and result is RouteState.SUCCEEDED:
                 result = RouteState.CANCELED
             self._state = result
         self._notify(self._on_state, result)

@@ -3,6 +3,7 @@
 import threading
 
 import numpy as np
+import pytest
 
 from tb4_voice_control.command_parser import Intent
 from tb4_voice_control.map_model import MapMetadata, OccupancyMap
@@ -50,7 +51,7 @@ class Backend:
         return self.outcome
 
 
-def controller(tmp_path, backend=None, pose=None):
+def controller(tmp_path, backend=None, pose=GoalPose(20.0, 20.0, 0.0)):
     """Build one observed controller around deterministic external adapters."""
     semantic, occupancy = runtime_map(tmp_path)
     backend = backend or Backend()
@@ -92,7 +93,9 @@ def test_current_region_changes_from_to_route_and_suppresses_reached_goal(
     assert runtime.state is RuntimeState.SUCCEEDED
 
 
-def test_production_backend_polls_amcl_before_first_route(tmp_path, monkeypatch):
+@pytest.mark.parametrize('other_callback_first', [False, True])
+def test_production_backend_polls_amcl_before_first_route(
+        tmp_path, monkeypatch, other_callback_first):
     """A cached-only first command would resend the source region goal."""
     from geometry_msgs.msg import PoseWithCovarianceStamped
 
@@ -137,6 +140,8 @@ def test_production_backend_polls_amcl_before_first_route(tmp_path, monkeypatch)
 
     def publish_pose(node, timeout_sec):
         spin_timeouts.append(timeout_sec)
+        if other_callback_first and len(spin_timeouts) == 1:
+            return  # Another ready callback, including BasicNavigator's AMCL callback.
         message = PoseWithCovarianceStamped()
         message.header.frame_id = 'map'
         message.pose.pose.position.x = 2.0
@@ -152,6 +157,18 @@ def test_production_backend_polls_amcl_before_first_route(tmp_path, monkeypatch)
     runtime.process_text('Đi từ A đến B')
     assert executors[0].routes == [('b',)]
     assert spin_timeouts and 0 < spin_timeouts[0] <= 0.1
+
+
+def test_missing_localization_reports_error_and_retry_dispatches(tmp_path):
+    """An unavailable pose is distinct from a known outside-region pose."""
+    runtime, backend, events = controller(tmp_path, pose=None)
+    runtime.process_text('Đi đến B')
+    assert events['error'][-1].code == 'localization_error'
+    assert backend.calls == []
+    runtime._current_pose = lambda: GoalPose(20.0, 20.0, 0.0)
+    runtime.process_text('Đi đến B')
+    assert runtime.wait(2)
+    assert backend.calls == ['b']
 
 
 def test_invalid_text_reports_typed_error_and_sends_no_goal(tmp_path):

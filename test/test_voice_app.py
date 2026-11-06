@@ -1,5 +1,6 @@
 """Drive the real Qt runtime window offscreen with deterministic adapters."""
 
+from dataclasses import replace
 import threading
 
 import numpy as np
@@ -15,6 +16,39 @@ from tb4_voice_control.speech import TranscriptionResult
 from tb4_voice_control.voice_app import VoiceControlWindow
 
 from test_runtime_controller import runtime_map
+
+
+@pytest.mark.parametrize('defect,code', [
+    ('outside', 'goal_out_of_bounds'), ('occupied', 'goal_not_free'),
+    ('invalid', 'invalid_polygon'), ('overlap', 'overlapping_regions'),
+])
+def test_startup_rejects_invalid_map_before_backend(tmp_path, defect, code, monkeypatch):
+    """Geometric configuration errors block backend construction."""
+    from types import SimpleNamespace
+
+    import rclpy
+    from tb4_voice_control import voice_app
+
+    semantic, occupancy = runtime_map(tmp_path)
+    a, b = semantic.regions
+    if defect == 'outside':
+        a = replace(a, goal=GoalPose(1000.0, 1000.0, 0.0))
+    elif defect == 'occupied':
+        occupancy.free_mask[8, 2] = False
+    elif defect == 'invalid':
+        a = replace(a, polygon_pixels=((0, 5), (4, 9), (4, 5), (0, 9)))
+    else:
+        b = replace(b, polygon_pixels=a.polygon_pixels)
+    semantic = replace(semantic, regions=(a, b))
+    calls = []
+    monkeypatch.setattr(voice_app, '_parse_runtime_arguments',
+                        lambda argv: (SimpleNamespace(regions='regions'), []))
+    monkeypatch.setattr(voice_app, 'load_regions', lambda path: semantic)
+    monkeypatch.setattr(voice_app, 'load_occupancy_map', lambda path: occupancy)
+    monkeypatch.setattr(rclpy, 'init', lambda **kwargs: calls.append('ROS initialized'))
+    with pytest.raises(ValueError, match=code):
+        voice_app.main([])
+    assert calls == []
 
 
 @pytest.fixture(scope='module')

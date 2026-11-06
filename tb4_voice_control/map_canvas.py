@@ -5,7 +5,7 @@ import math
 from PyQt5.QtCore import pyqtSignal, QPointF, Qt
 from PyQt5.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PyQt5.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsScene,
-                             QGraphicsView)
+                             QGraphicsSimpleTextItem, QGraphicsView)
 
 from tb4_voice_control.map_model import OccupancyMap, pixel_to_ros, ros_to_pixel
 from tb4_voice_control.regions import GoalPose
@@ -136,6 +136,14 @@ class MapCanvas(QGraphicsView):
             polygon.setZValue(1)
             self._polygons[region.id] = polygon
             self._overlays.append(polygon)
+            label = self.scene().addSimpleText(region.name)
+            label.setBrush(QColor('black'))
+            label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+            label.setData(0, region.id)
+            label.setZValue(3)
+            bounds = polygon.boundingRect()
+            label.setPos(bounds.center())
+            self._overlays.append(label)
             if self.occupancy is not None:
                 x, y = ros_to_pixel((region.goal.x, region.goal.y),
                                     self.occupancy.metadata, self.occupancy.image.shape[0])
@@ -219,7 +227,8 @@ class MapCanvas(QGraphicsView):
             event.accept()
             return
         if self.mode == 'select':
-            item = self.itemAt(event.pos())
+            item = next((candidate for candidate in self.items(event.pos())
+                         if not isinstance(candidate, QGraphicsSimpleTextItem)), None)
             if not isinstance(item, _VertexHandle):
                 self.set_selected_region(item.data(0) if item is not None else None)
         super().mousePressEvent(event)

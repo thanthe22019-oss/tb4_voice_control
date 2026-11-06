@@ -8,7 +8,7 @@ import numpy as np
 from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt5.QtGui import QMouseEvent, QWheelEvent
 from PyQt5.QtTest import QSignalSpy, QTest
-from PyQt5.QtWidgets import QApplication, QGraphicsPixmapItem
+from PyQt5.QtWidgets import QApplication, QGraphicsPixmapItem, QGraphicsSimpleTextItem
 import pytest
 
 from tb4_voice_control.map_canvas import MapCanvas
@@ -67,6 +67,21 @@ def test_native_image_pixels_are_not_resampled(canvas):
     assert items[0].pixmap().toImage().pixelColor(0, 0).red() == 0
     assert items[0].pixmap().toImage().pixelColor(1, 0).red() == 255
     assert items[0].pos() == QPointF(-0.5, -0.5)
+
+
+def test_unicode_region_label_refresh_and_selection(canvas):
+    region = replace(canvas._regions['a'], name='Phòng thí nghiệm')
+    canvas.set_regions((region,))
+    labels = [item for item in canvas.scene().items()
+              if isinstance(item, QGraphicsSimpleTextItem)]
+    assert len(labels) == 1
+    assert labels[0].text() == 'Phòng thí nghiệm'
+    assert labels[0].data(0) == 'a'
+    canvas.set_selected_region('a')
+    assert labels[0].scene() is canvas.scene()
+    canvas.set_regions(())
+    assert not [item for item in canvas.scene().items()
+                if isinstance(item, QGraphicsSimpleTextItem)]
 
 
 def test_scene_bounds_include_entire_first_and_last_cells(canvas):

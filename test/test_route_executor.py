@@ -92,6 +92,24 @@ def test_cancel_rejects_concurrent_start_then_allows_restart():
     assert executor.state is RouteState.SUCCEEDED
 
 
+def test_failed_cancel_confirmation_remains_failure():
+    """A cancellation request cannot mask an unconfirmed backend failure."""
+    class Unconfirmed(Backend):
+
+        def execute(self, region, cancel_event, on_progress):
+            self.entered.set()
+            assert cancel_event.wait(2)
+            return RouteState.FAILED
+
+    backend = Unconfirmed()
+    executor = RouteExecutor(backend, regions())
+    assert executor.start(('a',))
+    assert backend.entered.wait(2)
+    executor.cancel()
+    assert executor.wait(2)
+    assert executor.state is RouteState.FAILED
+
+
 def test_empty_route_succeeds_without_dispatch():
     """An already satisfied command must send no navigation goal."""
     backend = Backend()

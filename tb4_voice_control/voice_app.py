@@ -13,6 +13,7 @@ from tb4_voice_control.audio_capture import AudioRecorder
 from tb4_voice_control.command_parser import Intent
 from tb4_voice_control.map_model import load_occupancy_map
 from tb4_voice_control.qt_workers import NavigationWorker, SpeechWorker
+from tb4_voice_control.region_validation import validate_semantic_map
 from tb4_voice_control.regions import load_regions
 from tb4_voice_control.route_executor import LegProgress
 from tb4_voice_control.runtime_controller import (
@@ -281,11 +282,20 @@ def _parse_runtime_arguments(argv=None):
     return parser.parse_args(application_arguments), ros_arguments
 
 
+def _validate_runtime_map(semantic_map, occupancy):
+    issues = validate_semantic_map(semantic_map, occupancy)
+    if issues:
+        details = '; '.join(f'{issue.region_id or "map"}: {issue.code}: {issue.message}'
+                            for issue in issues)
+        raise ValueError(f'Invalid region configuration: {details}')
+
+
 def main(argv=None):
     """Initialize ROS and speech only for the console runtime."""
     arguments, ros_arguments = _parse_runtime_arguments(argv)
     semantic_map = load_regions(arguments.regions)
     occupancy = load_occupancy_map(semantic_map.map_yaml)
+    _validate_runtime_map(semantic_map, occupancy)
     with arguments.voice_config.open(encoding='utf-8') as stream:
         config = yaml.safe_load(stream) or {}
 

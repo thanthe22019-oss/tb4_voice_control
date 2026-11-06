@@ -42,7 +42,7 @@ class RuntimeController:
                  current_pose: Callable[[], GoalPose | None] | None = None,
                  executor_factory=RouteExecutor,
                  pose_poll_timeout: float = 0.05):
-        """Build the executor and retain injectable external boundaries."""
+        """Build the executor; callers must validate the semantic map against occupancy."""
         if pose_poll_timeout < 0:
             raise ValueError('pose_poll_timeout must not be negative')
         self.semantic_map = semantic_map
@@ -232,7 +232,8 @@ class RuntimeController:
     def _current_region_id(self) -> str | None:
         pose = self._current_pose()
         if pose is None:
-            return None
+            raise ValueError('Chưa nhận được /amcl_pose; '
+                             'đặt vị trí ban đầu trong RViz và thử lại.')
         if hasattr(pose, 'x') and hasattr(pose, 'y'):
             point = (pose.x, pose.y)
         else:

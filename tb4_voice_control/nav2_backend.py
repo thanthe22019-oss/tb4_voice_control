@@ -5,8 +5,10 @@ import math
 import threading
 import time
 
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from lifecycle_msgs.srv import GetState
+from nav2_msgs.action import NavigateToPose
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 import rclpy
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -25,8 +27,8 @@ def goal_to_pose(navigator, frame_id, goal):
     pose = PoseStamped()
     pose.header.frame_id = frame_id
     pose.header.stamp = navigator.get_clock().now().to_msg()
-    pose.pose.position.x = coordinates.x
-    pose.pose.position.y = coordinates.y
+    pose.pose.position.x = float(coordinates.x)
+    pose.pose.position.y = float(coordinates.y)
     pose.pose.orientation.z = math.sin(coordinates.yaw / 2.0)
     pose.pose.orientation.w = math.cos(coordinates.yaw / 2.0)
     return pose
@@ -94,6 +96,9 @@ def wait_for_nav2(navigator, timeout, cancel_event=None):
 def navigate_one_goal(navigator, frame_id, goal, timeout, feedback_period,
                       cancel_event=None, on_progress=None):
     """Execute a ready goal; cancel on deadline, shutdown, or cooperative request."""
+    if hasattr(navigator.nav_to_pose_client, 'send_goal_async'):
+        return _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
+                                cancel_event, on_progress)
     if _stopped(cancel_event):
         return TaskResult.CANCELED
     coordinates = getattr(goal, 'goal', goal)
@@ -130,6 +135,82 @@ def navigate_one_goal(navigator, frame_id, goal, timeout, feedback_period,
     except Exception:
         navigator.cancelTask()
         raise
+
+
+def _navigate_action(navigator, frame_id, goal, timeout, feedback_period,
+                     cancel_event, on_progress):
+    """Own Humble action futures; unresolved cleanup is reported as failure."""
+    deadline = time.monotonic() + timeout
+    client = navigator.nav_to_pose_client
+    while not _stopped(cancel_event):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            navigator.error('Action discovery timed out.')
+            return TaskResult.FAILED
+        if client.wait_for_server(timeout_sec=min(0.2, remaining)):
+            break
+    if _stopped(cancel_event):
+        return TaskResult.CANCELED
+    message = NavigateToPose.Goal()
+    message.pose = goal_to_pose(navigator, frame_id, goal)
+    send = client.send_goal_async(message, navigator._feedbackCallback)
+
+    def cancel_late(future):
+        try:
+            handle = future.result()
+            if handle is not None and handle.accepted:
+                handle.cancel_goal_async()
+                navigator.error('Late accepted goal: cancellation requested; outcome unconfirmed.')
+        except Exception as error:  # noqa: B902 - asynchronous transport boundary
+            navigator.error(f'Late goal cleanup failed: {error}')
+
+    while not send.done() and not _stopped(cancel_event):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        rclpy.spin_until_future_complete(navigator, send, timeout_sec=min(0.1, remaining))
+    if not send.done() or _stopped(cancel_event):
+        send.add_done_callback(cancel_late)
+        navigator.error('Goal acceptance unresolved; cancellation outcome is indeterminate.')
+        return TaskResult.FAILED
+    handle = send.result()
+    if handle is None or not handle.accepted:
+        navigator.error('Goal was rejected by Nav2.')
+        return TaskResult.FAILED
+    result = handle.get_result_async()
+    next_feedback = time.monotonic() + feedback_period
+    while not result.done() and not _stopped(cancel_event):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        rclpy.spin_until_future_complete(navigator, result, timeout_sec=min(0.1, remaining))
+        now = time.monotonic()
+        if now >= next_feedback:
+            feedback = navigator.getFeedback()
+            if feedback is not None and on_progress is not None:
+                duration = feedback.navigation_time
+                on_progress(LegProgress(getattr(goal, 'id', goal.name),
+                                        distance_remaining=feedback.distance_remaining,
+                                        elapsed_seconds=duration.sec + duration.nanosec / 1e9))
+            next_feedback = now + feedback_period
+    if result.done():
+        status = result.result().status
+        return {GoalStatus.STATUS_SUCCEEDED: TaskResult.SUCCEEDED,
+                GoalStatus.STATUS_CANCELED: TaskResult.CANCELED}.get(status, TaskResult.FAILED)
+    canceled_by_user = _stopped(cancel_event)
+    cancel = handle.cancel_goal_async()
+    cleanup_deadline = time.monotonic() + min(timeout, 1.0)
+    while not cancel.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
+        rclpy.spin_until_future_complete(navigator, cancel, timeout_sec=0.1)
+    if not cancel.done() or not cancel.result().goals_canceling:
+        navigator.error('Goal cancellation rejected or unconfirmed.')
+        return TaskResult.FAILED
+    while not result.done() and rclpy.ok() and time.monotonic() < cleanup_deadline:
+        rclpy.spin_until_future_complete(navigator, result, timeout_sec=0.1)
+    if not result.done() or result.result().status != GoalStatus.STATUS_CANCELED:
+        navigator.error('Goal cancellation terminal result is unconfirmed.')
+        return TaskResult.FAILED
+    return TaskResult.CANCELED if canceled_by_user else TaskResult.FAILED
 
 
 class BasicNavigatorBackend:
@@ -190,8 +271,12 @@ class BasicNavigatorBackend:
                 self._io_busy = True
         if available:
             try:
-                if rclpy.ok():
-                    rclpy.spin_once(self.navigator, timeout_sec=timeout)
+                deadline = time.monotonic() + timeout
+                while rclpy.ok():
+                    remaining = max(0.0, deadline - time.monotonic())
+                    rclpy.spin_once(self.navigator, timeout_sec=remaining)
+                    if self.current_pose is not None or remaining <= 0.0:
+                        break
             finally:
                 self._release_io()
         return self.current_pose

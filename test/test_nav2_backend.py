@@ -4,6 +4,7 @@ import math
 import threading
 from types import SimpleNamespace
 
+from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav2_simple_commander.robot_navigator import TaskResult
@@ -105,6 +106,23 @@ def region():
     """Use a goal whose half-angle quaternion is easy to check independently."""
     return Region('b', 'Bay', (), (1, 2, 3), ((0, 0), (1, 0), (0, 1)),
                   GoalPose(1.25, -2.5, math.pi / 2))
+
+
+def test_integer_yaml_goal_converts_to_real_ros_pose(tmp_path):
+    """Accepted integer YAML coordinates satisfy actual ROS float setters."""
+    from tb4_voice_control.regions import load_regions
+    import yaml
+
+    path = tmp_path / 'regions.yaml'
+    path.write_text(yaml.safe_dump({
+        'schema_version': 1, 'map': {'yaml': 'map.yaml', 'frame_id': 'map'},
+        'regions': [{'id': 'a', 'name': 'A', 'aliases': [], 'color': [1, 2, 3],
+                     'polygon_pixels': [[0, 0], [3, 0], [0, 3]],
+                     'goal': {'x': 2, 'y': 1, 'yaw': 0}}],
+    }), encoding='utf-8')
+    goal = load_regions(path).regions[0]
+    pose = nav2_backend.goal_to_pose(Navigator(), 'map', goal)
+    assert (pose.pose.position.x, pose.pose.position.y) == (2.0, 1.0)
 
 
 def test_region_maps_to_stamped_map_goal_and_readiness_checks(ros):
@@ -239,3 +257,97 @@ def test_amcl_updates_current_pose_and_callback_in_map_frame(ros):
     navigator.pose_callback(message)
     assert len(poses) == 1
     assert backend.poll_pose() == backend.current_pose
+
+
+class Future:
+    """Small future matching rclpy's done, result and callback interface."""
+
+    def __init__(self, value=None, done=False):
+        self.value, self.ready, self.callbacks = value, done, []
+
+    def done(self):
+        return self.ready
+
+    def result(self):
+        return self.value
+
+    def add_done_callback(self, callback):
+        self.callbacks.append(callback)
+        if self.ready:
+            callback(self)
+
+    def resolve(self, value):
+        self.value, self.ready = value, True
+        for callback in self.callbacks:
+            callback(self)
+
+
+def test_pending_send_times_out_and_late_acceptance_requests_cancel(ros):
+    navigator = Navigator()
+    pending = Future()
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: pending
+    navigator._feedbackCallback = lambda message: None
+    assert nav2_backend.navigate_one_goal(navigator, 'map', region(), 0.3, 1) \
+        is TaskResult.FAILED
+    cancels = []
+    handle = SimpleNamespace(accepted=True, cancel_goal_async=lambda: cancels.append(True))
+    pending.resolve(handle)
+    assert cancels == [True]
+
+
+def test_action_future_success_uses_real_message_and_terminal_status(ros):
+    navigator = Navigator()
+    result = Future(SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED), done=True)
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result)
+    sent = []
+    navigator.nav_to_pose_client.send_goal_async = lambda message, callback: (
+        sent.append(message) or Future(handle, done=True))
+    navigator._feedbackCallback = lambda message: None
+    assert nav2_backend.navigate_one_goal(navigator, 'map', region(), 1, 1) \
+        is TaskResult.SUCCEEDED
+    assert sent[0].pose.pose.position.x == 1.25
+
+
+def test_cancel_requires_response_and_canceled_terminal_status(ros, monkeypatch):
+    navigator = Navigator()
+    result = Future()
+    cancel = Future(SimpleNamespace(goals_canceling=[object()]), done=True)
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result,
+                             cancel_goal_async=lambda: cancel)
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: Future(handle, done=True)
+    navigator._feedbackCallback = lambda message: None
+    canceled = threading.Event()
+
+    def advance(node, future, timeout_sec):
+        if not canceled.is_set():
+            canceled.set()
+        else:
+            result.resolve(SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+
+    monkeypatch.setattr(nav2_backend.rclpy, 'spin_until_future_complete', advance)
+    assert nav2_backend.navigate_one_goal(navigator, 'map', region(), 1, 1, canceled) \
+        is TaskResult.CANCELED
+
+
+@pytest.mark.parametrize('cancel_response', [None, SimpleNamespace(goals_canceling=[])])
+def test_unconfirmed_cancel_is_failure(ros, cancel_response):
+    navigator = Navigator()
+    result = Future()
+    cancel = Future(cancel_response, done=cancel_response is not None)
+    handle = SimpleNamespace(accepted=True, get_result_async=lambda: result,
+                             cancel_goal_async=lambda: cancel)
+    navigator.nav_to_pose_client.send_goal_async = lambda *args: Future(handle, done=True)
+    navigator._feedbackCallback = lambda message: None
+    canceled = threading.Event()
+    monkey = nav2_backend.rclpy.spin_until_future_complete
+
+    def request_cancel(*args, **kwargs):
+        canceled.set()
+        return monkey(*args, **kwargs)
+
+    nav2_backend.rclpy.spin_until_future_complete = request_cancel
+    try:
+        assert nav2_backend.navigate_one_goal(navigator, 'map', region(), 1, 1, canceled) \
+            is TaskResult.FAILED
+    finally:
+        nav2_backend.rclpy.spin_until_future_complete = monkey
