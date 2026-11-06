@@ -15,8 +15,9 @@
 - Source repository copied from: `/home/alex/Interaction/tb4_nav2`
 - Source `tb4_nav2` was intentionally kept unchanged.
 
-Do **not** merge, push, or claim final completion yet. Task 2 implementation
-is complete; independent review and fresh controller verification are pending.
+Do **not** merge, push, or claim final completion yet. Task 2 review found a
+modal cleanup race; its fix requires independent review and fresh controller
+verification.
 
 ## What is implemented
 
@@ -41,13 +42,13 @@ is complete; independent review and fresh controller verification are pending.
 
 ## Last recorded automated evidence
 
-Task 2 implementation verification with ROS Humble sourced:
+Task 2 fix round 1 verification with ROS Humble sourced:
 
-- Focused controller and UI: 13 and 14 passed, respectively.
-- `pytest -q`: 262 passed, 1 skipped (two inherited deprecation warnings).
+- Focused controller and UI: 29 passed combined.
+- `pytest -q`: 264 passed, 1 skipped (two inherited deprecation warnings).
 - `colcon build`: 1 package finished.
-- `colcon test`: 262 passed, 1 skipped.
-- `colcon test-result --verbose`: 263 tests, 0 errors, 0 failures, 1 skipped.
+- `colcon test`: 264 passed, 1 skipped.
+- `colcon test-result --verbose`: 265 tests, 0 errors, 0 failures, 1 skipped.
 
 These are historical results. Run fresh verification before making any new
 completion claim.
@@ -60,8 +61,8 @@ The operator can explicitly force local cleanup after a warning that remote
 cancellation is unconfirmed; navigation stays disabled for the process.
 The affected route remains failed rather than canceled or succeeded.
 
-Task 1 has passed independent review. Task 2 needs independent review, then
-a fresh whole-plan review and full verification by the controller session.
+Task 1 has passed independent review. Task 2 fix round 1 needs independent
+review, then a fresh whole-plan review and full controller verification.
 
 Relevant files:
 
@@ -77,6 +78,13 @@ Relevant files:
 
 Review evidence (ignored SDD workspace):
 
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/progress.md`
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-1-review.md`
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-2-report.md`
+- `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-2-review.md`
+
+Earlier milestone history:
+
 - `.superpowers/sdd/2026-11-02-tb4-voice-control/final-branch-review.md`
 - `.superpowers/sdd/2026-11-02-tb4-voice-control/final-fix-report.md`
 - `.superpowers/sdd/2026-11-02-tb4-voice-control/progress.md`
@@ -91,7 +99,9 @@ git log -8 --oneline
 source /opt/ros/humble/setup.bash
 ```
 
-Before editing, read this file and the three SDD evidence files listed above.
+Before editing, read this file and the current cleanup lifecycle ledger,
+Task 1 review, Task 2 report and review listed above; retain the earlier
+milestone evidence for historical context.
 Do not reset or discard a dirty worktree. Preserve user changes.
 
 Review Task 2 and run the complete proof below in the controller session

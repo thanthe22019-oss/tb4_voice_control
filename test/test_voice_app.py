@@ -376,3 +376,91 @@ def test_force_abort_requires_warning_and_never_reenables_navigation(
         backend.resolve()
         widget.close()
         wait_until(app, lambda: shutdown_calls == [True])
+
+
+def test_cleanup_resolves_during_warning_then_next_cleanup_can_be_forced(
+        app, tmp_path, monkeypatch):
+    """A stale confirmation must not disable force on the next cleanup."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+
+    def execute(region, cancel_event, on_progress):
+        backend.calls.append(region.id)
+        backend.release.clear()
+        backend.cleanup_state = CleanupState.PENDING
+        return RouteState.FAILED
+
+    backend.execute = execute
+    widget, _, _, shutdown_calls = make_window(
+        tmp_path, backend=backend, shutdown_timeout_ms=20)
+    warnings = []
+
+    def choose(parent, title, message, *args):
+        warnings.append(message)
+        if len(warnings) == 1:
+            backend.resolve()
+            assert widget._controller.wait(2)
+            app.processEvents()
+        return QMessageBox.Yes
+
+    monkeypatch.setattr(QMessageBox, 'warning', choose)
+    try:
+        widget.text_input.setText('Đi đến B')
+        QTest.mouseClick(widget.send_button, Qt.LeftButton)
+        wait_until(app, lambda: widget.force_abort_button.isVisible())
+        QTest.mouseClick(widget.force_abort_button, Qt.LeftButton)
+        wait_until(app, lambda: widget.record_button.isEnabled())
+        QTest.mouseClick(widget.send_button, Qt.LeftButton)
+        wait_until(app, lambda: len(backend.calls) == 2)
+        wait_until(app, lambda: widget.force_abort_button.isVisible())
+        assert widget.force_abort_button.isEnabled()
+        assert not widget.close()
+        assert shutdown_calls == []
+        QTest.mouseClick(widget.force_abort_button, Qt.LeftButton)
+        wait_until(app, lambda: shutdown_calls == [True])
+        assert backend.cleanup_state is CleanupState.FORCE_ABORTED
+        assert len(warnings) == 2
+        widget.shutdown()
+        assert shutdown_calls == [True]
+    finally:
+        backend.resolve()
+        widget.close()
+        wait_until(app, lambda: shutdown_calls == [True])
+
+
+def test_rejected_force_request_restores_cleanup_button(app, tmp_path, monkeypatch):
+    """A rejected force request leaves the pending cleanup actionable."""
+    backend = CleanupBackend()
+    backend.cleanup_state = CleanupState.QUIESCENT
+    entered = threading.Event()
+    release = threading.Event()
+    original = backend.execute
+
+    def execute(*args):
+        backend.cleanup_state = CleanupState.PENDING
+        return original(*args)
+
+    def reject_force():
+        entered.set()
+        assert release.wait(2)
+        return False
+
+    backend.execute = execute
+    backend.force_abort_cleanup = reject_force
+    widget, _, _, shutdown_calls = make_window(tmp_path, backend=backend)
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: QMessageBox.Yes)
+    try:
+        widget.text_input.setText('Đi đến B')
+        QTest.mouseClick(widget.send_button, Qt.LeftButton)
+        wait_until(app, lambda: widget.force_abort_button.isVisible())
+        QTest.mouseClick(widget.force_abort_button, Qt.LeftButton)
+        assert entered.wait(2)
+        assert not widget.force_abort_button.isEnabled()
+        release.set()
+        wait_until(app, lambda: widget.force_abort_button.isEnabled())
+        assert backend.cleanup_state is CleanupState.PENDING
+    finally:
+        release.set()
+        backend.resolve()
+        widget.close()
+        wait_until(app, lambda: shutdown_calls == [True])

@@ -32,6 +32,7 @@ class VoiceControlWindow(QMainWindow):
     cancel_requested = pyqtSignal()
     adapter_error = pyqtSignal(str, str)
     speech_shutdown_requested = pyqtSignal()
+    force_abort_finished = pyqtSignal(int, bool)
 
     def __init__(self, controller: RuntimeController, recorder, transcriber, *,
                  sample_rate: int = 16000,
@@ -46,6 +47,8 @@ class VoiceControlWindow(QMainWindow):
         self._shutdown_started = False
         self._shutdown_done = False
         self._shutdown_retry_pending = False
+        self._cleanup_epoch = 0
+        self._force_abort_epoch = None
         self._region_names = {
             region.id: region.name
             for region in controller.semantic_map.regions
@@ -144,17 +147,34 @@ class VoiceControlWindow(QMainWindow):
         self.text_input.returnPressed.connect(self._submit_text)
         self.cancel_button.clicked.connect(self.cancel_requested.emit)
         self.force_abort_button.clicked.connect(self._force_abort)
+        self.force_abort_finished.connect(self._force_abort_finished)
 
     def _force_abort(self):
+        epoch = self._cleanup_epoch
         if QMessageBox.warning(
                 self, 'Chưa xác nhận hủy',
                 'Nav2 chưa xác nhận hủy từ xa. Buộc dừng sẽ khóa điều hướng '
                 'trong phiên này. Tiếp tục?',
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
+        if (epoch != self._cleanup_epoch
+                or self._controller.state is not RuntimeState.CLEANING):
+            return
+        self._force_abort_epoch = epoch
         self.force_abort_button.setEnabled(False)
-        threading.Thread(target=self._controller.force_abort_cleanup,
-                         daemon=True).start()
+
+        def abort():
+            result = self._controller.force_abort_cleanup()
+            self.force_abort_finished.emit(epoch, result)
+
+        threading.Thread(target=abort, daemon=True).start()
+
+    def _force_abort_finished(self, epoch, aborted):
+        if self._force_abort_epoch == epoch:
+            self._force_abort_epoch = None
+        if (not aborted and epoch == self._cleanup_epoch
+                and self._controller.state is RuntimeState.CLEANING):
+            self.force_abort_button.setEnabled(True)
 
     def _submit_text(self):
         self.text_requested.emit(self.text_input.text())
@@ -199,6 +219,9 @@ class VoiceControlWindow(QMainWindow):
             ' — '.join(details) or 'Đang gửi goal tới Nav2')
 
     def _show_state(self, state: RuntimeState):
+        if state is RuntimeState.CLEANING:
+            self._cleanup_epoch += 1
+            self.force_abort_button.setEnabled(True)
         navigating = state is RuntimeState.NAVIGATING
         busy = (navigating or state is RuntimeState.CLEANING
                 or self._shutdown_started or self._controller.navigation_disabled)
