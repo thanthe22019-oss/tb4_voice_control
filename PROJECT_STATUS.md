@@ -6,7 +6,7 @@
 
 ## Snapshot
 
-- Last updated: 2026-11-06 (Asia/Ho_Chi_Minh)
+- Last updated: 2026-11-07 (Asia/Ho_Chi_Minh)
 - Repository: `/home/alex/Interaction/tb4_voice_control`
 - Active worktree: `/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`
 - Branch: `feature/implementation`
@@ -58,6 +58,25 @@ ROS Humble sourced and Qt offscreen:
 
 These results were recorded on 2026-11-06 by the controller after the scoped
 fix re-review. Run fresh verification again after any code change.
+
+## GPU and speech runtime evidence
+
+Host checks recorded on 2026-11-07:
+
+- `nvidia-smi`: NVIDIA GeForce RTX 3050, driver `580.178.04`, CUDA driver API
+  `13.0`.
+- Speech venv created with `faster-whisper==1.2.1`,
+  `ctranslate2==4.8.5`, and `sounddevice==0.5.6`.
+- CTranslate2 outside the sandbox reports one CUDA device and supports
+  `float16`.
+- `WhisperModel('small', device='cuda', compute_type='float16')` loaded
+  successfully; model data is cached under `.speech-model-cache/`.
+- `pip check` reports no broken Python requirements after installing
+  `pycryptodome` in the isolated speech venv.
+- Host `arecord -l` detects `HD-Audio Generic / ALC257 Analog`, but the
+  `sounddevice` import still needs the host package `libportaudio2`. Actual
+  capture/transcription from the microphone remains pending until that package
+  is installed.
 
 ## Nav2 cleanup lifecycle
 
@@ -134,9 +153,11 @@ any packaging or launch change.
 
 ## External blockers and intentionally deferred work
 
-- NVIDIA/CUDA: blocked in the current environment; `nvidia-smi` previously
-  exited 9 because the driver could not communicate.
-- Microphone: blocked; `arecord -l` previously found no soundcards.
+- NVIDIA/CUDA: validated for model initialization on the RTX 3050 with
+  `faster-whisper` `small` and CUDA `float16`; an actual audio transcription
+  sample is still pending.
+- Microphone: host hardware is detected, but `libportaudio2` must be installed
+  before `sounddevice` capture can be validated.
 - Live TurtleBot 4/Nav2 simulation acceptance: not run yet.
 - GitHub: `gh` authentication was invalid and no remote was configured. Do not
   store tokens in the repository.
@@ -153,7 +174,7 @@ Never claim any blocked/manual item passed without new evidence.
 - No public GitHub repository/remote has been verified.
 - The academic report is not part of the current code milestone.
 - Cleanup-lifecycle implementation/review/automated verification is complete
-  locally. The next milestone is live simulator/hardware acceptance, NVIDIA
-  and microphone validation when available, then GitHub publication when
-  authentication/remote access is ready.
+  locally. GPU model initialization is validated. The next milestone is
+  PortAudio/microphone transcription plus live simulator acceptance, then
+  GitHub publication when authentication/remote access is ready.
 
