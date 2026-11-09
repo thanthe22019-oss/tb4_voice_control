@@ -27,13 +27,8 @@ class TranscriptionResult:
 def _gemini_client(api_key: str):
     """Import the optional SDK only on first real transcription."""
     from google import genai
-    from google.genai import types
-
-    return genai.Client(
-        api_key=api_key,
-        http_options=types.HttpOptions(
-            retry_options=types.HttpRetryOptions(attempts=0)),
-    )
+    # In the pinned Generate Content transport, unset retry options mean one attempt.
+    return genai.Client(api_key=api_key)
 
 
 def _encode_wav(audio: np.ndarray, sample_rate: int) -> str:
@@ -56,19 +51,19 @@ def _api_error_message(error: Exception) -> str:
         status = getattr(error, 'code', None)
     if status is None:
         status = getattr(getattr(error, 'response', None), 'status_code', None)
-    if isinstance(error, TimeoutError) or 'TimeoutException' in names:
+    if isinstance(error, TimeoutError) or names & {'TimeoutException', 'APITimeoutError'}:
         return 'Speech transcription timeout; try again.'
     if status in (401, 403):
         return 'Speech authentication failed; check GEMINI_API_KEY.'
     if status == 429:
         return 'Speech rate limit reached; try again later.'
-    if isinstance(error, ConnectionError) or 'TransportError' in names:
+    if isinstance(error, ConnectionError) or names & {'TransportError', 'APIConnectionError'}:
         return 'Speech network connection failed; check connectivity.'
     return 'Speech transcription failed; try again.'
 
 
 class GeminiTranscriber:
-    """Transcribe mono samples using a lazy Interactions client."""
+    """Transcribe mono samples using a lazy Generate Content client."""
 
     def __init__(self, model: str = 'gemini-3.8-flash', language: str = 'vi',
                  request_timeout_seconds: float = 30.0, client: Any | None = None,
@@ -99,25 +94,28 @@ class GeminiTranscriber:
                 ) from None
         request = {
             'model': self.model,
-            'input': [{
-                'type': 'text',
+            'contents': [{'role': 'user', 'parts': [{
                 'text': 'Chuyển lời nói tiếng Việt trong audio thành đúng một câu lệnh '
                         'điều hướng. '
                         'Chỉ trả về nguyên văn câu lệnh; nếu không nghe rõ, trả về chuỗi rỗng. '
                         'Không giải thích.',
             }, {
-                'type': 'audio', 'data': _encode_wav(audio, sample_rate),
-                'mime_type': 'audio/wav',
-            }],
-            'store': False,
-            'automatic_continuation': False,
-            'timeout': self.request_timeout_seconds,
+                'inline_data': {'data': _encode_wav(audio, sample_rate),
+                                'mime_type': 'audio/wav'},
+            }]}],
+            # The SDK validates this dict as GenerateContentConfig/HttpOptions.
+            # Dict input keeps the injected boundary usable without the optional SDK.
+            'config': {
+                'store': False,
+                'automatic_continuation': False,
+                'http_options': {'timeout': self.request_timeout_seconds * 1000},
+            },
         }
         try:
-            response = self._client.interactions.create(**request)
+            response = self._client.models.generate_content(**request)
         except Exception as error:
             raise SpeechModelError(_api_error_message(error)) from None
-        output_text = getattr(response, 'output_text', None)
+        output_text = getattr(response, 'text', None)
         if not isinstance(output_text, str):
             raise SpeechModelError('Speech service returned a malformed transcript.')
         return TranscriptionResult(

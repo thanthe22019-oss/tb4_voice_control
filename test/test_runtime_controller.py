@@ -368,7 +368,7 @@ def test_adapter_and_nav2_failures_stay_typed_and_send_no_extra_goal(
     """External failures stay diagnosable instead of silently succeeding."""
     runtime, backend, events = controller(tmp_path)
     runtime.report_error('microphone_error', 'Không mở được microphone')
-    runtime.report_error('model_error', 'CUDA không khả dụng')
+    runtime.report_error('model_error', 'Gemini API không khả dụng')
     assert [error.code for error in events['error'][-2:]] == [
         'microphone_error', 'model_error']
     assert backend.calls == []

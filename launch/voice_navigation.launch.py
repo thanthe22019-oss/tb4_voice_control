@@ -1,4 +1,4 @@
-"""Start or reuse Nav2 and launch the CUDA voice-control application."""
+"""Start or reuse Nav2 and launch the Gemini voice-control application."""
 
 import os
 

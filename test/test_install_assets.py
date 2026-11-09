@@ -103,7 +103,7 @@ def test_speech_requirements_are_gemini_only_and_bounded(project_root):
         for requirement in [Requirement(line.strip())]
     }
     assert {name: str(req.specifier) for name, req in requirements.items()} == {
-        'google-genai': '<3,>=2.30.1', 'numpy': '<2',
+        'google-genai': '<2.34,>=2.33', 'numpy': '<2',
         'sounddevice': '<1.0,>=0.4.6',
     }
 
