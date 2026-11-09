@@ -19,7 +19,7 @@ from tb4_voice_control.regions import load_regions
 from tb4_voice_control.route_executor import LegProgress
 from tb4_voice_control.runtime_controller import (
     RuntimeController, RuntimeErrorInfo, RuntimeState)
-from tb4_voice_control.speech import WhisperTranscriber
+from tb4_voice_control.speech import GeminiTranscriber
 import yaml
 
 
@@ -356,11 +356,10 @@ def main(argv=None):
         sample_rate=int(config.get('sample_rate', 16000)),
         max_record_seconds=float(config.get('max_record_seconds', 15)),
     )
-    transcriber = WhisperTranscriber(
-        model_size=str(config.get('model_size', 'small')),
-        device=str(config.get('device', 'cuda')),
-        compute_type=str(config.get('compute_type', 'float16')),
+    transcriber = GeminiTranscriber(
+        model=str(config.get('model', 'gemini-3.8-flash')),
         language=str(config.get('language', 'vi')),
+        request_timeout_seconds=float(config.get('request_timeout_seconds', 30.0)),
     )
     app = QApplication.instance() or QApplication([sys.argv[0]])
     closed = False
@@ -378,8 +377,7 @@ def main(argv=None):
         controller, recorder, transcriber,
         sample_rate=recorder.sample_rate,
         connection_status='Nav2: chờ localization / action server',
-        gpu_status=(f'{transcriber.device.upper()} — {transcriber.model_size} '
-                    f'({transcriber.compute_type})'),
+        gpu_status=f'Gemini API — {transcriber.model}',
         shutdown_ros=shutdown_ros,
     )
     window.show()
