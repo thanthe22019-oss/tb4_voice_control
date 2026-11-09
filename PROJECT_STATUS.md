@@ -6,7 +6,7 @@
 
 ## Snapshot
 
-- Last updated: 2026-11-07 (Asia/Ho_Chi_Minh)
+- Last updated: 2026-11-09 (Asia/Ho_Chi_Minh)
 - Repository: `/home/alex/Interaction/tb4_voice_control`
 - Active worktree: `/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`
 - Branch: `feature/implementation`
@@ -44,8 +44,26 @@ and do not merge or push without the user's explicit next-step choice.
   cancellation, CLI finalization, and warned operator force-abort.
 - Cleanup-aware route admission and UI shutdown, including terminal-callback
   re-entry and exactly-once queued-close handling.
+- Reproducible speech requirements for CUDA 12 cuBLAS and cuDNN 9 runtime
+  wheels, with preflight guidance through the existing launcher environment.
 
 ## Last recorded automated evidence
+
+CUDA runtime delivery verification on 2026-11-09:
+
+- Focused delivery tests: 9 passed.
+- Full `pytest -q` with ROS Humble sourced and Qt offscreen: 275 passed,
+  1 skipped, 2 inherited deprecation warnings.
+- Fresh `colcon build`: 1 package finished. Fresh `colcon test`: 275 passed,
+  1 skipped; `colcon test-result --verbose`: 276 tests, 0 errors, 0 failures,
+  1 skipped. Installed assets, six console entry points, and the no-op/reuse
+  launch path were checked; venv `pip check` reports no broken requirements.
+- One prior run failed
+  `test_close_stops_active_recording_without_transcription` on a transcription
+  timing assertion; its isolated rerun and the subsequent full suite passed.
+- Speech venv NumPy was downgraded from 2.2.6 to 1.26.4 after the installed
+  launcher exposed the system OpenCV NumPy ABI mismatch. Requirements now
+  constrain `numpy<2`; `scripts/run_voice_control.sh --help` starts successfully.
 
 Fresh controller verification on reviewed implementation head `26c79e5`, with
 ROS Humble sourced and Qt offscreen:
@@ -73,10 +91,18 @@ Host checks recorded on 2026-11-07:
   successfully; model data is cached under `.speech-model-cache/`.
 - `pip check` reports no broken Python requirements after installing
   `pycryptodome` in the isolated speech venv.
-- Host `arecord -l` detects `HD-Audio Generic / ALC257 Analog`, but the
-  `sounddevice` import still needs the host package `libportaudio2`. Actual
-  capture/transcription from the microphone remains pending until that package
-  is installed.
+- Host `arecord -l` detects `HD-Audio Generic / ALC257 Analog`.
+
+Controller diagnostic evidence recorded on 2026-11-09:
+
+- Microphone capture succeeded. CUDA inference initially failed because
+  `libcublas.so.12` was missing.
+- After installing NVIDIA CUDA 12 cuBLAS and cuDNN 9 wheels in the speech venv
+  and setting launcher-equivalent `LD_LIBRARY_PATH`, end-to-end microphone
+  capture → Faster-Whisper CUDA `float16` transcription exited 0.
+- The observed text did not reliably match the spoken sample. This proves
+  pipeline execution, not recognition quality or successful voice navigation.
+  Recognition-quality validation and live simulator acceptance remain pending.
 
 ## Nav2 cleanup lifecycle
 
@@ -153,11 +179,9 @@ any packaging or launch change.
 
 ## External blockers and intentionally deferred work
 
-- NVIDIA/CUDA: validated for model initialization on the RTX 3050 with
-  `faster-whisper` `small` and CUDA `float16`; an actual audio transcription
-  sample is still pending.
-- Microphone: host hardware is detected, but `libportaudio2` must be installed
-  before `sounddevice` capture can be validated.
+- NVIDIA/CUDA and microphone: end-to-end capture and CUDA `float16`
+  transcription exited 0 on the RTX 3050, but recognition-quality validation
+  remains pending because the observed text did not reliably match the sample.
 - Live TurtleBot 4/Nav2 simulation acceptance: not run yet.
 - GitHub: `gh` authentication was invalid and no remote was configured. Do not
   store tokens in the repository.
@@ -174,7 +198,7 @@ Never claim any blocked/manual item passed without new evidence.
 - No public GitHub repository/remote has been verified.
 - The academic report is not part of the current code milestone.
 - Cleanup-lifecycle implementation/review/automated verification is complete
-  locally. GPU model initialization is validated. The next milestone is
-  PortAudio/microphone transcription plus live simulator acceptance, then
+  locally. Microphone-to-CUDA transcription execution is validated. The next
+  milestone is recognition-quality validation plus live simulator acceptance, then
   GitHub publication when authentication/remote access is ready.
 

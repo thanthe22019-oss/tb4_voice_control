@@ -30,5 +30,9 @@ else:
 PY
 
 echo
-echo 'CUDA preflight (requires an NVIDIA driver and may download model small):'
-echo "  $VENV_PATH/bin/python -c 'from faster_whisper import WhisperModel; WhisperModel(\"small\", device=\"cuda\", compute_type=\"float16\"); print(\"CUDA Whisper: OK\")'"
+echo 'CUDA preflight (requires an NVIDIA driver and a built ROS workspace):'
+echo '  nvidia-smi'
+echo "  \"$REPO_ROOT/scripts/run_voice_control.sh\""
+echo 'The launcher prepends venv site-packages/nvidia/*/lib to LD_LIBRARY_PATH.'
+echo 'Use push-to-talk for the first transcription to check CUDA inference.'
+echo 'Model small downloads on first transcription; opening the UI alone does not check CUDA.'

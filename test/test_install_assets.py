@@ -1,11 +1,14 @@
 """Verify the install manifest and launch-facing delivery assets."""
 
+import os
 from pathlib import Path
 import runpy
+import subprocess
 
 from launch import LaunchContext
 from launch.actions import ExecuteProcess, IncludeLaunchDescription
 from launch.utilities import perform_substitutions
+from packaging.requirements import Requirement
 import pytest
 
 from tb4_voice_control import voice_app
@@ -15,6 +18,50 @@ from tb4_voice_control import voice_app
 def project_root():
     """Return the repository checkout under test."""
     return Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(('name', 'supported', 'excluded'), [
+    ('nvidia-cublas-cu12', ('12', '12.9'), ('11.9', '13', '14')),
+    ('nvidia-cudnn-cu12', ('9', '9.9'), ('8.9', '10', '11')),
+    ('numpy', ('1.23', '1.26.4'), ('2', '2.2.6', '3')),
+])
+def test_speech_requirements_bound_cuda_runtime(
+        project_root, name, supported, excluded):
+    """Missing bounds break CUDA libraries or the system OpenCV NumPy ABI."""
+    requirements = {
+        requirement.name: requirement
+        for line in (project_root / 'requirements-speech.txt').read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith('#')
+        for requirement in [Requirement(line.strip())]
+    }
+    assert name in requirements
+    constraint = requirements[name].specifier
+    assert all(version in constraint for version in supported)
+    assert all(version not in constraint for version in excluded)
+
+
+def test_setup_cuda_preflight_uses_launcher_environment(project_root, tmp_path):
+    """Setup must guide CUDA checks through the launcher's NVIDIA paths."""
+    checkout = tmp_path / 'checkout with spaces'
+    scripts = checkout / 'scripts'
+    scripts.mkdir(parents=True)
+    setup = scripts / 'setup_speech_venv.sh'
+    setup.write_bytes((project_root / 'scripts' / setup.name).read_bytes())
+    # Avoid package installation and hardware probes; exercise real Bash output.
+    bin_path = checkout / '.venv-speech' / 'bin'
+    bin_path.mkdir(parents=True)
+    for name in ('python', 'python3'):
+        executable = bin_path / name
+        executable.write_text('#!/bin/sh\nexit 0\n')
+        executable.chmod(0o755)
+    result = subprocess.run(
+        ['bash', str(setup)], check=True, capture_output=True, text=True,
+        env={**os.environ, 'PATH': f'{bin_path}:{os.environ["PATH"]}'})
+    preflight = result.stdout.split('CUDA preflight', 1)[1]
+    assert f'"{scripts}/run_voice_control.sh"' in preflight
+    assert 'site-packages/nvidia/*/lib' in preflight
+    assert 'LD_LIBRARY_PATH' in preflight
+    assert f'{bin_path}/python -c' not in preflight
 
 
 def _setup_arguments(monkeypatch, project_root):

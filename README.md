@@ -74,12 +74,21 @@ Speech dependency được cách ly trong `.venv-speech`, không đưa vào rosd
 nvidia-smi
 source install/setup.bash
 ./scripts/run_voice_control.sh --help
+./scripts/run_voice_control.sh
 ```
 
 Script setup in phiên bản thực tế của `faster-whisper`, `ctranslate2` và
 `sounddevice`. Cấu hình demo mặc định là model `small`, `device: cuda`,
 `compute_type: float16`, `language: vi`, âm thanh mono 16 kHz và tối đa 15 giây.
-Model tải vào `.speech-model-cache/`; venv, cache và bản ghi âm không được commit.
+Requirements cài CUDA 12 cuBLAS (`nvidia-cublas-cu12>=12,<13`) và cuDNN 9
+(`nvidia-cudnn-cu12>=9,<10`) trong venv; không cần cài toàn bộ CUDA Toolkit.
+Ràng buộc `numpy<2` giữ tương thích ABI với OpenCV/ROS của hệ thống.
+Launcher tìm các thư mục `site-packages/nvidia/*/lib` của venv và thêm vào đầu
+`LD_LIBRARY_PATH`, giữ lại đường dẫn đã có. Dùng launcher cho CUDA preflight,
+sau đó nhấn push-to-talk để ghi âm và kiểm tra transcription trên CUDA;
+`--help` hoặc chỉ mở UI chưa kiểm tra CUDA inference.
+Model `small` tải vào `.speech-model-cache/` trong lần transcription đầu tiên;
+venv, cache và bản ghi âm không được commit.
 
 ## Khởi động Nav2
 
