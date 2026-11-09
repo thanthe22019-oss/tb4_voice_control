@@ -110,7 +110,7 @@ def test_speech_requirements_are_gemini_only_and_bounded(project_root):
 
 @pytest.mark.parametrize('key', ['', 'SECRET_SENTINEL'])
 def test_setup_reports_gemini_preflight_without_secret_or_gpu(project_root, tmp_path, key):
-    """Preflight reports imports, microphone and presence without leaking credentials."""
+    """Preflight ignores unrelated system packages and never leaks credentials."""
     checkout = tmp_path / 'checkout with spaces'
     scripts = checkout / 'scripts'
     scripts.mkdir(parents=True)
@@ -120,7 +120,13 @@ def test_setup_reports_gemini_preflight_without_secret_or_gpu(project_root, tmp_
     bin_path = checkout / '.venv-speech' / 'bin'
     bin_path.mkdir(parents=True)
     executable = bin_path / 'python'
-    executable.write_text('#!/bin/sh\nif [ "$1" = "-" ]; then exec /usr/bin/python3 "$@"; fi\n')
+    executable.write_text(
+        '#!/bin/sh\n'
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "check" ]; then\n'
+        '  echo "unrelated system package conflict" >&2\n'
+        '  exit 86\n'
+        'fi\n'
+        'if [ "$1" = "-" ]; then exec /usr/bin/python3 "$@"; fi\n')
     executable.chmod(0o755)
     fake = tmp_path / 'fake'
     (fake / 'google').mkdir(parents=True)

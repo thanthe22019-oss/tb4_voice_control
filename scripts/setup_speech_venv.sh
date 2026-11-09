@@ -9,7 +9,6 @@ REQUIREMENTS_PATH="$REPO_ROOT/requirements-speech.txt"
 python3 -m venv --system-site-packages "$VENV_PATH"
 "$VENV_PATH/bin/python" -m pip install --upgrade pip
 "$VENV_PATH/bin/python" -m pip install -r "$REQUIREMENTS_PATH"
-"$VENV_PATH/bin/python" -m pip check
 
 "$VENV_PATH/bin/python" - <<'PY'
 from importlib.metadata import version
