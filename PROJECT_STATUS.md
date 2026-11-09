@@ -10,7 +10,7 @@
 - Repository: `/home/alex/Interaction/tb4_voice_control`
 - Active worktree: `/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`
 - Branch: `feature/implementation`
-- Reviewed implementation head: `26c79e5203bd72935a8644f03cfa7482f292f7cb` (`fix: preserve cleanup ownership through finalization`).
+- Reviewed implementation head: `7b8fa7eb630e835c472d2fb3984f55f91099a79b` (`fix: install Faster-Whisper CUDA runtime`).
 - Base/bootstrap commit: `3161f4d`
 - Source repository copied from: `/home/alex/Interaction/tb4_nav2`
 - Source `tb4_nav2` was intentionally kept unchanged.
@@ -64,6 +64,13 @@ CUDA runtime delivery verification on 2026-11-09:
 - Speech venv NumPy was downgraded from 2.2.6 to 1.26.4 after the installed
   launcher exposed the system OpenCV NumPy ABI mismatch. Requirements now
   constrain `numpy<2`; `scripts/run_voice_control.sh --help` starts successfully.
+- Independent task and whole-plan reviews found no Critical/Important issue;
+  the CUDA runtime change is ready to merge. Deferred Minor coverage debt is
+  limited to exhaustive requirement-marker checks and hardware-free launcher
+  environment permutations.
+- Fresh controller rerun after review: `pytest` 275 passed/1 skipped; colcon
+  276 tests with 0 errors/failures and 1 skipped; `pip check`, launcher
+  `--help`, `git diff --check`, and the worktree status check passed.
 
 Fresh controller verification on reviewed implementation head `26c79e5`, with
 ROS Humble sourced and Qt offscreen:
@@ -103,6 +110,11 @@ Controller diagnostic evidence recorded on 2026-11-09:
 - The observed text did not reliably match the spoken sample. This proves
   pipeline execution, not recognition quality or successful voice navigation.
   Recognition-quality validation and live simulator acceptance remain pending.
+- Repeating acceptance at the PulseAudio default input reproduced the same
+  unrelated Vietnamese phrase. A temporary microphone-volume reduction from
+  100% to 20% removed clipping (`peak 0.254`, `RMS 0.0169`) but did not change
+  the transcript; the host volume was restored automatically. Input/VAD and
+  hallucination handling need a separate quality milestone before demo claims.
 
 ## Nav2 cleanup lifecycle
 
@@ -138,6 +150,10 @@ Review evidence (ignored SDD workspace):
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/task-2-review.md`
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/final-review.md`
 - `.superpowers/sdd/2026-11-06-nav2-cleanup-lifecycle/final-fix-report.md`
+- `.superpowers/sdd/2026-11-09-faster-whisper-cuda-runtime/progress.md`
+- `.superpowers/sdd/2026-11-09-faster-whisper-cuda-runtime/task-1-report.md`
+- `.superpowers/sdd/2026-11-09-faster-whisper-cuda-runtime/task-1-review.md`
+- `.superpowers/sdd/2026-11-09-faster-whisper-cuda-runtime/final-review.md`
 
 Earlier milestone history:
 
