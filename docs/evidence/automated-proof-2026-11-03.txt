@@ -1,6 +1,8 @@
 TB4 Voice Control — automated proof
 Date: 2026-11-03 (Asia/Ho_Chi_Minh)
 Checkout paths below are sanitized as <workspace>.
+Historical evidence: speech-provider results below predate the Gemini migration
+and do not establish current Gemini acceptance.
 
 1. Focused install-assets gate
 

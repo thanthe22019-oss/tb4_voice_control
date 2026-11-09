@@ -30,6 +30,15 @@ and receive text through the same runtime-controller path as typed input.
 
 ## Architecture
 
+### Final-review architecture adjustment (2026-11-09)
+
+The original Interactions design is superseded by the official Generate Content
+API with `google-genai>=2.33,<2.34`. This released window supports Python 3.10,
+`store=False`, disabled automatic continuation and a verifiable single-attempt
+transport. The Interactions call accepting the continuation flag requires
+Python 3.11, and its older bridge does not honor zero retries. The cost is a
+future Interactions migration after the ROS/Python upgrade, with fresh SDK proof.
+
 ### Audio request
 
 `GeminiTranscriber` accepts the existing contiguous mono float32 NumPy array.
@@ -38,15 +47,21 @@ mono WAV into `io.BytesIO` with the supplied sample rate. A maximum 15-second
 16 kHz clip is about 480 KB and remains comfortably below Gemini's documented
 20 MB inline-request limit.
 
-The adapter base64-encodes the WAV and sends one Interactions API request using
-the official `google-genai` SDK:
+The adapter base64-encodes the WAV and sends one Generate Content API request
+through `client.models.generate_content` using the official `google-genai` SDK:
 
 - configurable model, with a documented default suitable for audio input;
 - text instruction requesting only the exact Vietnamese navigation utterance,
   an empty response when speech is unintelligible, and no explanation;
 - inline `audio/wav` input;
 - `store=False`;
-- a bounded configurable timeout.
+- `automatic_continuation=False`;
+- a bounded configurable `HttpOptions.timeout` in milliseconds.
+
+The SDK validates the config dict as `GenerateContentConfig` and `HttpOptions`;
+dict input keeps injected tests independent of the optional SDK. The response
+`text` property supplies the transcript. Retry options remain unset/None on the
+real client, which means exactly one attempt in this pinned transport.
 
 There is no automatic retry. A retry after an ambiguous timeout could duplicate
 cost and feed a stale command to the robot; the operator can press record again.
@@ -69,7 +84,7 @@ the key is absent.
 ### Dependencies and migration
 
 `requirements-speech.txt` replaces Faster-Whisper and NVIDIA runtime wheels with
-a bounded `google-genai` dependency while retaining `numpy<2` for Ubuntu 22.04
+`google-genai>=2.33,<2.34` while retaining `numpy<2` for Ubuntu 22.04
 ROS/OpenCV ABI compatibility and `sounddevice` for capture. The setup script
 prints resolved Gemini SDK and audio dependency versions plus key-presence and
 microphone preflight results.
@@ -102,8 +117,16 @@ the existing deterministic handling.
 
 ## Testing
 
-All automated tests use an injected fake Gemini client; they make no network,
-microphone, or GPU calls. Tests cover WAV format/clipping, inline MIME/base64,
+Automated tests use injected Gemini clients and the actual 2.33.x SDK with
+`httpx.MockTransport`; they make no network, microphone, or GPU calls.
+The portable suite skips actual-SDK tests. Acceptance and CI must separately run
+`.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
+after installing the bounded requirements; the flag requires 2.33.x and fails
+if it is absent or incompatible. Omitting this explicit command would leave the
+SDK contract untested. It verifies the production request, WAV/settings, one HTTP attempt
+and no retry wait for 429 (large Retry-After), 5xx, connection and timeout errors,
+and no follow-up request even when a continuation token is returned.
+Tests cover WAV format/clipping, inline MIME/base64,
 model/timeout/store parameters, exact text extraction, empty/malformed output,
 missing credentials, sanitized API failures, configuration, dependency removal,
 launcher key checks, and unchanged worker/controller routing.

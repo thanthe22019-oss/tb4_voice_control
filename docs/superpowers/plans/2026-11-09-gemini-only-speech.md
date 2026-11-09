@@ -4,21 +4,41 @@
 
 **Goal:** Replace local Faster-Whisper/CUDA inference with stateless Gemini API transcription while preserving push-to-talk, deterministic Vietnamese command parsing, and Nav2 routing.
 
-**Architecture:** Keep `AudioRecorder`, `SpeechWorker`, and `RuntimeController` unchanged at their existing boundaries. A new `GeminiTranscriber` converts mono NumPy samples to an in-memory WAV, sends one inline-audio Interactions API request through an injected or lazily constructed Google Gen AI client, and returns the existing `TranscriptionResult`. Runtime configuration, UI, launch scripts, dependencies, and operator documentation become Gemini-only.
+**Architecture:** Keep `AudioRecorder`, `SpeechWorker`, and `RuntimeController` unchanged at their existing boundaries. A new `GeminiTranscriber` converts mono NumPy samples to an in-memory WAV, sends one inline-audio Generate Content API request through an injected or lazily constructed Google Gen AI client, and returns the existing `TranscriptionResult`. Runtime configuration, UI, launch scripts, dependencies, and operator documentation become Gemini-only.
 
 **Tech Stack:** Python 3.10, NumPy 1.x ABI, standard-library `wave`/`io`/`base64`, `google-genai`, PyQt5, ROS 2 Humble, pytest/ament.
 
 **Spec:** `docs/superpowers/specs/2026-11-09-gemini-only-speech-design.md`
 
+## Final-review architecture adjustment (2026-11-09)
+
+The originally planned Interactions path is superseded by the official Generate
+Content API on `google-genai>=2.33,<2.34`. Released Interactions support for
+`automatic_continuation=False` requires Python 3.11, while ROS Humble uses Python
+3.10; its older bridge also maps zero retry attempts to one retry. The shipped
+path uses `models.generate_content`, SDK-validated `GenerateContentConfig` dict
+input with `store=False`, `automatic_continuation=False`, and per-request
+`HttpOptions.timeout` in milliseconds. Client retry options remain unset/None.
+The dict input preserves tests without the optional SDK. Offline real-SDK tests
+must verify acceptance, WAV payload, timeout, disabled continuation, and exactly
+one attempt without sleeping for 429/5xx/connection/timeout failures. A later
+Interactions migration requires a ROS/Python upgrade and renewed acceptance.
+
+The portable ROS suite skips SDK acceptance by default. Acceptance and CI must
+separately run `.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py
+--run-speech-sdk`; with the flag, an absent or incompatible SDK is an error.
+This keeps the existing system NumPy/ROS environment independent of optional
+speech dependencies. Omitting this command would leave the SDK contract untested.
+
 ## Global Constraints
 
 - Speech provider is Gemini-only: no Faster-Whisper, CTranslate2, CUDA, NVIDIA runtime, CPU fallback, Files API, or Live API production path.
-- Use `gemini-3.8-flash` as the default configurable audio-capable model and `google-genai>=2.30.1,<3` as the SDK range.
+- Use `gemini-3.8-flash` as the default configurable audio-capable model and `google-genai>=2.33,<2.34` as the SDK range.
 - Read the secret only from `GEMINI_API_KEY`; never place it in YAML, Git, logs, exceptions, test output, or documentation examples containing a real value.
-- Send a base64 inline `audio/wav` payload through `client.interactions.create`; set `store=False`, `automatic_continuation=False`, a bounded timeout, and SDK retry attempts to zero.
+- Send a base64 inline `audio/wav` payload through `client.models.generate_content`; set `store=False`, `automatic_continuation=False`, a bounded timeout, and leave SDK retry options unset/None.
 - The default request timeout is `30` seconds, language is `vi`, recording is mono `16000` Hz with a maximum duration of `15` seconds, and existing `numpy<2`/`sounddevice>=0.4.6,<1.0` constraints remain.
 - Gemini returns text only. `RuntimeController.process_text` and the deterministic parser remain solely responsible for selecting regions and sending Nav2 goals.
-- Automated tests use injected fakes only and perform no network, microphone, GPU, or Gemini billing operation.
+- Automated tests use injected clients and real-SDK `httpx.MockTransport`; they perform no network, microphone, GPU, or Gemini billing operation.
 - No local temporary audio file is created; audio exists only in memory for the request.
 - API errors must be actionable but sanitized: never include the original exception string, request headers, raw response, audio bytes, or API key.
 
@@ -26,7 +46,7 @@
 
 - Missing or blank `GEMINI_API_KEY` must raise a typed actionable speech error before importing/constructing the real client; Task 1 pins this in `test_missing_api_key_is_actionable_and_does_not_construct_client`.
 - Non-contiguous, multidimensional, or out-of-range samples must become valid clipped mono 16-bit WAV without mutating the caller buffer; Task 1 pins this in `test_request_contains_clipped_mono_pcm16_wav`.
-- Empty model text is valid silence, while absent/non-string `output_text` is a malformed response; Task 1 pins both behaviors in `test_empty_output_is_a_valid_transcript` and `test_malformed_output_is_a_typed_error`.
+- Empty model text is valid silence, while absent/non-string response `text` is a malformed response; Task 1 pins both behaviors in `test_empty_output_is_a_valid_transcript` and `test_malformed_output_is_a_typed_error`.
 - Timeout, auth, quota, network, and unknown SDK failures must not leak exception text or secrets; Task 1 pins the categories and redaction in `test_api_failures_are_categorized_without_leaking_details`.
 - Missing credentials or Gemini failure must emit a UI/runtime error and never enter parser/Nav2 routing; Task 2 pins this with the existing `SpeechWorker` boundary plus `test_speech_error_does_not_send_navigation_goal`.
 
@@ -39,16 +59,16 @@
 - Replace tests: `test/test_speech.py`
 
 **Interfaces:**
-- Consumes: mono or reshapeable audio samples accepted by `numpy.asarray`; a positive integer sample rate; optional injected client exposing `interactions.create(**kwargs)`.
+- Consumes: mono or reshapeable audio samples accepted by `numpy.asarray`; a positive integer sample rate; optional injected client exposing `models.generate_content(model=..., contents=..., config=...)`.
 - Produces: `GeminiTranscriber(model: str = 'gemini-3.8-flash', language: str = 'vi', request_timeout_seconds: float = 30.0, client: Any | None = None, client_factory: Callable[[str], Any] | None = None)` and its existing-compatible `transcribe(samples: numpy.ndarray, sample_rate: int) -> TranscriptionResult` method.
 - Preserves: `SpeechModelError` and `TranscriptionResult(text: str, language: str, duration_seconds: float)` for `SpeechWorker` compatibility.
-- Request contract: `client.interactions.create(model=self.model, input=[text_part, audio_part], store=False, automatic_continuation=False, timeout=self.request_timeout_seconds)`, where `audio_part` is `{'type': 'audio', 'data': <base64 WAV string>, 'mime_type': 'audio/wav'}`.
-- Default real-client factory: `google.genai.Client(api_key=<environment value>, http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=0)))`; import the optional SDK only when the real client is first needed.
+- Request contract: `client.models.generate_content(model=self.model, contents=[{'role': 'user', 'parts': [text_part, audio_part]}], config={'store': False, 'automatic_continuation': False, 'http_options': {'timeout': self.request_timeout_seconds * 1000}})`, where `audio_part` is `{'inline_data': {'data': <base64 WAV string>, 'mime_type': 'audio/wav'}}`. The SDK validates config dicts as `GenerateContentConfig` and `HttpOptions`.
+- Default real-client factory: `google.genai.Client(api_key=<environment value>)`; import the optional SDK only when the real client is first needed. Unset retry options give one attempt in the pinned Generate Content transport, verified with MockTransport.
 - Text instruction: `Chuyển lời nói tiếng Việt trong audio thành đúng một câu lệnh điều hướng. Chỉ trả về nguyên văn câu lệnh; nếu không nghe rõ, trả về chuỗi rỗng. Không giải thích.`
 
 - [ ] **Step 1: Write the failing request/WAV contract tests**
 
-  Replace Whisper fakes with a fake Interactions client and add `test_request_contains_clipped_mono_pcm16_wav`, `test_request_is_stateless_bounded_and_has_no_continuation`, and `test_valid_output_returns_existing_result_contract`. Decode the captured base64 with `wave.open(io.BytesIO(...))`; assert mono, 16-bit, supplied sample rate, clipped PCM values, exact instruction/audio parts, model `gemini-3.8-flash`, `store is False`, `automatic_continuation is False`, timeout `30.0`, stripped Vietnamese text, language `vi`, and duration `sample_count / sample_rate`.
+  Replace Whisper fakes with a fake Generate Content client and add `test_request_contains_clipped_mono_pcm16_wav`, `test_request_is_stateless_bounded_and_has_no_continuation`, and `test_valid_output_returns_existing_result_contract`. Decode the captured base64 with `wave.open(io.BytesIO(...))`; assert mono, 16-bit, supplied sample rate, clipped PCM values, exact instruction/audio parts, model `gemini-3.8-flash`, `store is False`, `automatic_continuation is False`, timeout `30000` milliseconds, stripped Vietnamese text, language `vi`, and duration `sample_count / sample_rate`.
 
 - [ ] **Step 2: Run the request tests and verify RED**
 
@@ -58,7 +78,7 @@
 
 - [ ] **Step 3: Implement minimal in-memory WAV and Gemini request behavior**
 
-  In `speech.py`, remove `WhisperTranscriber`, `_faster_whisper_model`, and CUDA model locking. Add `GeminiTranscriber`, private WAV encoding, lazy client creation, and `output_text.strip()` while retaining the existing result/error dataclasses. Validate positive sample rate and positive timeout with `ValueError`.
+  In `speech.py`, remove `WhisperTranscriber`, `_faster_whisper_model`, and CUDA model locking. Add `GeminiTranscriber`, private WAV encoding, lazy client creation, and `response.text.strip()` while retaining the existing result/error dataclasses. Validate positive sample rate and finite positive timeout with `ValueError`.
 
 - [ ] **Step 4: Run the request tests and verify GREEN**
 
@@ -161,7 +181,7 @@
 - Modify tests: `test/test_install_assets.py`
 
 **Interfaces:**
-- Produces dependency set: `google-genai>=2.30.1,<3`, `numpy<2`, and `sounddevice>=0.4.6,<1.0`; no Faster-Whisper/CTranslate2/NVIDIA package.
+- Produces dependency set: `google-genai>=2.33,<2.34`, `numpy<2`, and `sounddevice>=0.4.6,<1.0`; no Faster-Whisper/CTranslate2/NVIDIA package.
 - Produces setup preflight: print resolved `google-genai`, `numpy`, and `sounddevice` versions, microphone availability, and only whether `GEMINI_API_KEY` is present; never print its value.
 - Produces operator workflow: create/recreate `.venv-speech`, export a restricted Gemini API key in the current shell, disclose that microphone audio is sent to Google and requires Internet/quota, run UI, test three Vietnamese commands, and preserve text-input diagnosis.
 - Preserves: report generation remains deferred; live Gemini and Nav2 acceptance remain pending until separately evidenced.
@@ -190,12 +210,17 @@
 
   ```bash
   source /opt/ros/humble/setup.bash
-  QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" pytest -q
+  export QT_QPA_PLATFORM=offscreen
+  export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+  .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk
+  pytest -q
   colcon build --base-paths . --packages-select tb4_voice_control --symlink-install
   colcon test --base-paths . --packages-select tb4_voice_control --event-handlers console_direct+
   colcon test-result --verbose
+  .venv-speech/bin/python -m pip check
+  bash -n scripts/setup_speech_venv.sh scripts/run_voice_control.sh
   git diff --check
-  rg -n "faster[-_]whisper|ctranslate2|nvidia-cublas|nvidia-cudnn|LD_LIBRARY_PATH|HF_HOME|device: cuda|compute_type" tb4_voice_control config scripts requirements-speech.txt README.md docs test
+  rg -n "faster[-_]whisper|ctranslate2|nvidia-cublas|nvidia-cudnn|LD_LIBRARY_PATH|HF_HOME|device: cuda|compute_type|Interactions|interactions\\.create|2\\.30\\.1" tb4_voice_control config scripts launch requirements-speech.txt README.md docs test
   ```
 
   Expected: pytest/colcon report zero failures; `git diff --check` is clean; the final `rg` has no active production/runtime dependency or instruction match (historical evidence may remain only when clearly labeled as historical).

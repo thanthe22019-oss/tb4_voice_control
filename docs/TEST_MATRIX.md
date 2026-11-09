@@ -11,6 +11,7 @@ Trạng thái dùng hai nhóm tách biệt:
 |---|---|---|
 | Geometry, vùng, parser, executor, UI offscreen | Xem số liệu mới trong `PROJECT_STATUS.md` | AUTOMATED PASS |
 | Build và ament tests | Xem số liệu mới trong `PROJECT_STATUS.md` | AUTOMATED PASS |
+| Generate Content trên google-genai 2.33.x | `.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`: WAV inline, store=False, timeout, không continuation/retry; HTTP mock 200/429/5xx/network/timeout | AUTOMATED PASS (offline; không xác nhận dịch vụ thật) |
 | Installed assets + sáu entry point | manifest + installed share inspection | AUTOMATED PASS (2026-11-03) |
 | CLI vùng/ảnh/voice help | 6/6 `--help`; validation + render | AUTOMATED PASS (2026-11-03) |
 

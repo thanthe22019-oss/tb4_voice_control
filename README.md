@@ -78,6 +78,21 @@ cần Internet và quota cho mỗi lần nhận dạng. Cấu hình mặc địn
 `gemini-3.8-flash`, tiếng Việt, mono 16 kHz và tối đa 15 giây. `numpy<2` giữ
 tương thích ABI với OpenCV/ROS. `--help` hoặc mở UI chưa chứng minh nhận dạng.
 
+SDK được giới hạn `google-genai>=2.33,<2.34` cho Python 3.10/ROS Humble.
+Adapter dùng Generate Content API với WAV inline trong RAM, `store=False`,
+`automatic_continuation=False`, timeout mặc định 30 giây và không tự retry.
+Không đặt retry options: transport của phiên bản này thực hiện đúng một lần.
+Kiểm thử SDK thật hoàn toàn offline (synthetic key + `httpx.MockTransport`):
+
+```bash
+PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
+  .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk
+```
+
+Kiểm thử này không xác nhận model/quota hoặc chất lượng nhận dạng bằng key thật.
+Suite mặc định bỏ qua 9 test SDK; phải chạy lệnh riêng trên khi nghiệm thu
+hoặc trong CI. Khi bật cờ, thiếu SDK 2.33.x là lỗi, không phải skip.
+
 Để dọn dependency cũ, tự đổi tên `.venv-speech` rồi chạy lại setup để tạo venv
 mới; sau khi xác nhận venv mới hoạt động, tự xóa bản cũ nếu muốn. Setup không
 tự gỡ package bổ sung. Không commit venv hoặc bản ghi âm.
