@@ -78,7 +78,7 @@ def test_sample_rate_must_be_positive(sample_rate):
         speech.GeminiTranscriber(client=FakeInteractionsClient()).transcribe([], sample_rate)
 
 
-@pytest.mark.parametrize('timeout', [0, -1])
+@pytest.mark.parametrize('timeout', [0, -1, float('nan'), float('inf')])
 def test_timeout_must_be_positive(timeout):
     with pytest.raises(ValueError, match='timeout'):
         speech.GeminiTranscriber(request_timeout_seconds=timeout)

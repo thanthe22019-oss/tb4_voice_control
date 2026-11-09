@@ -3,6 +3,7 @@
 import base64
 from dataclasses import dataclass
 import io
+import math
 import os
 from typing import Any, Callable
 import wave
@@ -72,8 +73,8 @@ class GeminiTranscriber:
     def __init__(self, model: str = 'gemini-3.8-flash', language: str = 'vi',
                  request_timeout_seconds: float = 30.0, client: Any | None = None,
                  client_factory: Callable[[str], Any] | None = None):
-        if request_timeout_seconds <= 0:
-            raise ValueError('request timeout must be positive')
+        if not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0:
+            raise ValueError('request timeout must be finite and positive')
         self.model = model
         self.language = language
         self.request_timeout_seconds = request_timeout_seconds
