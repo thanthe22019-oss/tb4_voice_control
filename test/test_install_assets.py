@@ -94,28 +94,23 @@ def test_launcher_has_no_cuda_runtime_mutation(project_root, tmp_path, installed
     assert 'SECRET_SENTINEL' not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize(('name', 'supported', 'excluded'), [
-    ('nvidia-cublas-cu12', ('12', '12.9'), ('11.9', '13', '14')),
-    ('nvidia-cudnn-cu12', ('9', '9.9'), ('8.9', '10', '11')),
-    ('numpy', ('1.23', '1.26.4'), ('2', '2.2.6', '3')),
-])
-def test_speech_requirements_bound_cuda_runtime(
-        project_root, name, supported, excluded):
-    """Missing bounds break CUDA libraries or the system OpenCV NumPy ABI."""
+def test_speech_requirements_are_gemini_only_and_bounded(project_root):
+    """Only the specified provider and audio dependencies are delivered."""
     requirements = {
         requirement.name: requirement
         for line in (project_root / 'requirements-speech.txt').read_text().splitlines()
         if line.strip() and not line.lstrip().startswith('#')
         for requirement in [Requirement(line.strip())]
     }
-    assert name in requirements
-    constraint = requirements[name].specifier
-    assert all(version in constraint for version in supported)
-    assert all(version not in constraint for version in excluded)
+    assert {name: str(req.specifier) for name, req in requirements.items()} == {
+        'google-genai': '<3,>=2.30.1', 'numpy': '<2',
+        'sounddevice': '<1.0,>=0.4.6',
+    }
 
 
-def test_setup_cuda_preflight_uses_launcher_environment(project_root, tmp_path):
-    """Setup must guide CUDA checks through the launcher's NVIDIA paths."""
+@pytest.mark.parametrize('key', ['', 'SECRET_SENTINEL'])
+def test_setup_reports_gemini_preflight_without_secret_or_gpu(project_root, tmp_path, key):
+    """Preflight reports imports, microphone and presence without leaking credentials."""
     checkout = tmp_path / 'checkout with spaces'
     scripts = checkout / 'scripts'
     scripts.mkdir(parents=True)
@@ -124,18 +119,32 @@ def test_setup_cuda_preflight_uses_launcher_environment(project_root, tmp_path):
     # Avoid package installation and hardware probes; exercise real Bash output.
     bin_path = checkout / '.venv-speech' / 'bin'
     bin_path.mkdir(parents=True)
-    for name in ('python', 'python3'):
-        executable = bin_path / name
-        executable.write_text('#!/bin/sh\nexit 0\n')
-        executable.chmod(0o755)
+    executable = bin_path / 'python'
+    executable.write_text('#!/bin/sh\nif [ "$1" = "-" ]; then exec /usr/bin/python3 "$@"; fi\n')
+    executable.chmod(0o755)
+    fake = tmp_path / 'fake'
+    (fake / 'google').mkdir(parents=True)
+    (fake / 'google' / '__init__.py').touch()
+    (fake / 'google' / 'genai.py').touch()
+    (fake / 'sounddevice.py').write_text(
+        "def query_devices(kind): return {'name': 'Fake microphone'}\n")
+    (fake / 'sitecustomize.py').write_text(
+        "import importlib.metadata\nimportlib.metadata.version = lambda name: '1.2.3'\n")
+    python3 = bin_path / 'python3'
+    python3.write_text('#!/bin/sh\nexit 0\n')
+    python3.chmod(0o755)
     result = subprocess.run(
         ['bash', str(setup)], check=True, capture_output=True, text=True,
-        env={**os.environ, 'PATH': f'{bin_path}:{os.environ["PATH"]}'})
-    preflight = result.stdout.split('CUDA preflight', 1)[1]
-    assert f'"{scripts}/run_voice_control.sh"' in preflight
-    assert 'site-packages/nvidia/*/lib' in preflight
-    assert 'LD_LIBRARY_PATH' in preflight
-    assert f'{bin_path}/python -c' not in preflight
+        env={**os.environ, 'PATH': f'{bin_path}:{os.environ["PATH"]}',
+             'PYTHONPATH': str(fake), 'GEMINI_API_KEY': key})
+    output = result.stdout + result.stderr
+    for name in ('google-genai', 'numpy', 'sounddevice'):
+        assert f'{name}==1.2.3' in output
+    assert 'Fake microphone' in output
+    assert f"GEMINI_API_KEY: {'present' if key else 'absent'}" in output
+    assert 'SECRET_SENTINEL' not in output
+    assert 'CUDA' not in output
+    assert str(scripts / 'run_voice_control.sh') in output
 
 
 def _setup_arguments(monkeypatch, project_root):
@@ -194,9 +203,14 @@ def test_readme_covers_the_complete_operator_workflow(project_root):
     readme = (project_root / 'README.md').read_text(encoding='utf-8').casefold()
     for section in (
             'điều kiện tiên quyết', 'build và kiểm thử', 'map editor',
-            'nvidia cuda', 'khởi động nav2', 'demo bằng giọng nói',
+            'gemini api', 'khởi động nav2', 'demo bằng giọng nói',
             'xử lý lỗi', 'cấu trúc repository'):
         assert section in readme
+    for phrase in ('internet', 'quota', 'google', 'đi đến khu vực a',
+                   'đi đến phòng thí nghiệm', 'di chuyển từ khu vực a đến khu vực b'):
+        assert phrase in readme
+    assert 'faster-whisper' not in readme
+    assert 'nvidia cuda' not in readme
 
 
 def test_voice_launch_exposes_reuse_and_runtime_switches(

@@ -1,8 +1,8 @@
 # tb4_voice_control
 
 `tb4_voice_control` là gói ROS 2 Humble cho TurtleBot 4 Simulation, kết hợp
-trình phân vùng bản đồ thủ công, nhận dạng tiếng Việt bằng `faster-whisper`
-trên NVIDIA CUDA và điều hướng semantic qua Nav2. Bản đồ occupancy gốc không
+trình phân vùng bản đồ thủ công, nhận dạng tiếng Việt qua Gemini API và điều
+hướng semantic qua Nav2. Bản đồ occupancy gốc không
 bị thay đổi; polygon, tên/alias và goal được lưu riêng trong
 `config/regions.yaml`.
 
@@ -11,22 +11,16 @@ bị thay đổi; polygon, tên/alias và goal được lưu riêng trong
 - Ubuntu 22.04, ROS 2 Humble, `colcon`, Nav2 và TurtleBot 4 Simulator;
 - Python 3.10 với PyQt5, OpenCV, NumPy, Pillow và PyYAML từ Ubuntu/ROS;
 - micro đầu vào cho push-to-talk;
-- GPU NVIDIA, driver hoạt động và CUDA tương thích CTranslate2 cho demo chính;
-- khoảng trống để tải model `faster-whisper` `small` trong lần chạy đầu.
+- Internet, Gemini API key có giới hạn quyền và quota khả dụng.
 
 Kiểm tra môi trường trước khi demo:
 
 ```bash
 source /opt/ros/humble/setup.bash
-nvidia-smi
 arecord -l
 ros2 pkg prefix turtlebot4_ignition_bringup
 ros2 pkg prefix nav2_bringup
 ```
-
-Nếu `nvidia-smi` không nhìn thấy GPU thì không được ghi nhận demo CUDA là đạt.
-Ứng dụng không tự động đổi sang CPU; muốn chẩn đoán bằng CPU phải sửa có chủ ý
-`device` và `compute_type` trong `config/voice.yaml`.
 
 ## Build và kiểm thử
 
@@ -65,30 +59,28 @@ ros2 run tb4_voice_control render_segmented_map \
 ros2 run tb4_voice_control validate_regions config/regions.yaml
 ```
 
-## Thiết lập nhận dạng NVIDIA CUDA
+## Thiết lập nhận dạng Gemini API
 
 Speech dependency được cách ly trong `.venv-speech`, không đưa vào rosdep:
 
 ```bash
 ./scripts/setup_speech_venv.sh
-nvidia-smi
+export GEMINI_API_KEY='YOUR_RESTRICTED_KEY'
 source install/setup.bash
 ./scripts/run_voice_control.sh --help
 ./scripts/run_voice_control.sh
 ```
 
-Script setup in phiên bản thực tế của `faster-whisper`, `ctranslate2` và
-`sounddevice`. Cấu hình demo mặc định là model `small`, `device: cuda`,
-`compute_type: float16`, `language: vi`, âm thanh mono 16 kHz và tối đa 15 giây.
-Requirements cài CUDA 12 cuBLAS (`nvidia-cublas-cu12>=12,<13`) và cuDNN 9
-(`nvidia-cudnn-cu12>=9,<10`) trong venv; không cần cài toàn bộ CUDA Toolkit.
-Ràng buộc `numpy<2` giữ tương thích ABI với OpenCV/ROS của hệ thống.
-Launcher tìm các thư mục `site-packages/nvidia/*/lib` của venv và thêm vào đầu
-`LD_LIBRARY_PATH`, giữ lại đường dẫn đã có. Dùng launcher cho CUDA preflight,
-sau đó nhấn push-to-talk để ghi âm và kiểm tra transcription trên CUDA;
-`--help` hoặc chỉ mở UI chưa kiểm tra CUDA inference.
-Model `small` tải vào `.speech-model-cache/` trong lần transcription đầu tiên;
-venv, cache và bản ghi âm không được commit.
+Script in phiên bản `google-genai`, `numpy`, `sounddevice`, thiết bị micro và
+chỉ trạng thái có/không có key. Key chỉ export trong shell hiện tại; không ghi
+key vào repository hoặc chia sẻ trong chat. Âm thanh micro được gửi tới Google;
+cần Internet và quota cho mỗi lần nhận dạng. Cấu hình mặc định dùng
+`gemini-3.8-flash`, tiếng Việt, mono 16 kHz và tối đa 15 giây. `numpy<2` giữ
+tương thích ABI với OpenCV/ROS. `--help` hoặc mở UI chưa chứng minh nhận dạng.
+
+Để dọn dependency cũ, tự đổi tên `.venv-speech` rồi chạy lại setup để tạo venv
+mới; sau khi xác nhận venv mới hoạt động, tự xóa bản cũ nếu muốn. Setup không
+tự gỡ package bổ sung. Không commit venv hoặc bản ghi âm.
 
 ## Khởi động Nav2
 
@@ -129,7 +121,7 @@ Giữ nút **Giữ để nói**, nói rồi thả. Ba lệnh bắt buộc:
 
 UI hiển thị transcript, intent, lộ trình, chặng và feedback Nav2. Khi đang đi,
 nút nói và nhập text bị khóa; **Hủy lộ trình** dừng chuỗi hiện tại. Nhập text
-vẫn dùng được để tách lỗi parser khỏi lỗi micro/Whisper. Quy trình quay và danh
+vẫn dùng được để tách lỗi parser khỏi lỗi micro/Gemini. Quy trình quay và danh
 sách cảnh cần lưu nằm ở [docs/DEMO.md](docs/DEMO.md); trạng thái bằng chứng nằm
 ở [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md).
 
@@ -137,7 +129,7 @@ sách cảnh cần lưu nằm ở [docs/DEMO.md](docs/DEMO.md); trạng thái b�
 
 | Triệu chứng | Kiểm tra / khắc phục |
 |---|---|
-| `NVIDIA-SMI has failed` | Sửa driver/runtime NVIDIA, reboot nếu cần, chạy lại `nvidia-smi`; không claim CUDA trước khi đạt. |
+| Gemini lỗi hoặc không nhận dạng | Kiểm tra key đã export trong shell, Internet và quota; không chia sẻ giá trị key. |
 | Không có input device | Chạy `arecord -l`, kiểm tra quyền/thiết bị; vẫn dùng ô nhập text để test parser/Nav2. |
 | Thiếu `.venv-speech` | Chạy `./scripts/setup_speech_venv.sh`; không cài speech package vào Python ROS hệ thống. |
 | Wrapper không tìm thấy workspace | Chạy từ workspace colcon chuẩn, hoặc đặt `TB4_VOICE_CONTROL_ROOT=/đường/dẫn/repo`. |
@@ -161,8 +153,8 @@ test/                      kiểm thử pytest/ament không cần GPU hay micro
 
 ## Trạng thái bàn giao
 
-Kiểm thử tự động và các artifact cục bộ được lưu kèm mã nguồn. Kiểm thử CUDA,
-micro, TurtleBot 4 Simulation end-to-end, video và repository GitHub public chỉ
+Kiểm thử tự động và các artifact cục bộ được lưu kèm mã nguồn. Kiểm thử Gemini
+với key thật, micro, TurtleBot 4 Simulation end-to-end, video và GitHub public chỉ
 được đánh dấu đạt sau khi chạy trên đúng phần cứng/dịch vụ; xem test matrix để
 phân biệt rõ `AUTOMATED PASS` và `MANUAL/HARDWARE PENDING`. Báo cáo học thuật
 HTML/PDF đang được hoãn vì yêu cầu nội dung đã thay đổi và không thuộc phạm vi

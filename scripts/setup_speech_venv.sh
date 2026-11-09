@@ -13,13 +13,15 @@ python3 -m venv --system-site-packages "$VENV_PATH"
 
 "$VENV_PATH/bin/python" - <<'PY'
 from importlib.metadata import version
+import os
 
+import google.genai
 import sounddevice
-import faster_whisper
 
 print('Speech environment imports: OK')
-for distribution in ('faster-whisper', 'ctranslate2', 'sounddevice'):
+for distribution in ('google-genai', 'numpy', 'sounddevice'):
     print(f'{distribution}=={version(distribution)}')
+print(f"GEMINI_API_KEY: {'present' if os.environ.get('GEMINI_API_KEY', '').strip() else 'absent'}")
 
 try:
     device = sounddevice.query_devices(kind='input')
@@ -30,9 +32,5 @@ else:
 PY
 
 echo
-echo 'CUDA preflight (requires an NVIDIA driver and a built ROS workspace):'
-echo '  nvidia-smi'
+echo 'Gemini launcher (requires Internet, quota, and a built ROS workspace):'
 echo "  \"$REPO_ROOT/scripts/run_voice_control.sh\""
-echo 'The launcher prepends venv site-packages/nvidia/*/lib to LD_LIBRARY_PATH.'
-echo 'Use push-to-talk for the first transcription to check CUDA inference.'
-echo 'Model small downloads on first transcription; opening the UI alone does not check CUDA.'

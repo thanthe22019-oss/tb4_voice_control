@@ -1,5 +1,7 @@
 # Faster-Whisper CUDA Runtime Implementation Plan
 
+> Historical plan — superseded by the Gemini-only speech migration; not current setup or acceptance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the isolated speech setup install and launch the CUDA runtime required by Faster-Whisper on Linux.

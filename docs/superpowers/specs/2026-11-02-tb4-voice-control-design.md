@@ -1,5 +1,7 @@
 # Thiết kế hệ thống `tb4_voice_control`
 
+> Historical design — speech instructions are superseded by the Gemini-only migration.
+
 ## 1. Mục đích
 
 Xây dựng một repository ROS 2 Humble độc lập, kế thừa phần bản đồ và điều
@@ -307,4 +309,3 @@ Milestone này không được phép làm chậm hoặc làm mất ổn định 
 - Màu mặc định của vùng và phím tắt UI.
 - Tham số timeout hợp lý, với điều kiện chúng nằm trong file cấu hình và được
   ghi trong README.
-

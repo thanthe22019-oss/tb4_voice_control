@@ -1,5 +1,7 @@
 # Faster-Whisper CUDA Runtime Design
 
+> Historical design — superseded by the Gemini-only speech migration; not current setup or acceptance.
+
 ## Intent
 
 Make the documented speech setup reproducibly install and launch the CUDA

@@ -9,8 +9,8 @@ Trạng thái dùng hai nhóm tách biệt:
 
 | Hạng mục | Bằng chứng | Trạng thái |
 |---|---|---|
-| Geometry, vùng, parser, executor, UI offscreen | `pytest -q`: 227 pass, 1 skip | AUTOMATED PASS (2026-11-03) |
-| Build và ament tests | 1 package built; 228 tests, 0 error/failure, 1 skip | AUTOMATED PASS (2026-11-03) |
+| Geometry, vùng, parser, executor, UI offscreen | Xem số liệu mới trong `PROJECT_STATUS.md` | AUTOMATED PASS |
+| Build và ament tests | Xem số liệu mới trong `PROJECT_STATUS.md` | AUTOMATED PASS |
 | Installed assets + sáu entry point | manifest + installed share inspection | AUTOMATED PASS (2026-11-03) |
 | CLI vùng/ảnh/voice help | 6/6 `--help`; validation + render | AUTOMATED PASS (2026-11-03) |
 
@@ -26,8 +26,8 @@ Trạng thái dùng hai nhóm tách biệt:
 | 6 | Vùng không tồn tại không gửi goal | UI error + action log | MANUAL/HARDWARE PENDING |
 | 7 | Khóa lệnh mới và Cancel dừng route | video/UI + cancel result | MANUAL/HARDWARE PENDING |
 | 8 | Nav2 tránh vật cản | RViz/path + video | MANUAL/HARDWARE PENDING |
-| 9 | Whisper `small` CUDA/float16 nhận 3 câu | `nvidia-smi` + model log + transcript | MANUAL/HARDWARE PENDING — driver không hoạt động |
-| 10 | Micro push-to-talk | device list + ba lần thu | MANUAL/HARDWARE PENDING — không thấy soundcard |
+| 9 | Gemini API nhận 3 câu | transcript đúng + độ trễ từng yêu cầu với key thật | MANUAL/HARDWARE PENDING |
+| 10 | Micro push-to-talk | device list + ba lần thu | MANUAL/HARDWARE PENDING |
 | 11 | GitHub public + video | URL public/release | MANUAL/HARDWARE PENDING — auth/network |
 
 Báo cáo học thuật HTML/PDF: **DEFERRED / OUT OF CURRENT SCOPE** do yêu cầu nội

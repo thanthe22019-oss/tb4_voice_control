@@ -1,8 +1,6 @@
 # Speech-only dependencies for Python 3.10 on Ubuntu 22.04.
 # The setup script prints the exact resolved versions after installation.
-faster-whisper>=1.1.0,<2.0
+google-genai>=2.30.1,<3
 # System OpenCV/ROS extensions use the NumPy 1.x ABI.
 numpy<2
-nvidia-cublas-cu12>=12,<13
-nvidia-cudnn-cu12>=9,<10
 sounddevice>=0.4.6,<1.0

@@ -1,5 +1,7 @@
 # TB4 Voice Control Implementation Plan
 
+> Historical plan — speech instructions are superseded by the Gemini-only migration.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a public ROS 2 Humble repository that lets a user draw semantic regions on a TurtleBot 4 occupancy map, recognize Vietnamese push-to-talk commands with NVIDIA CUDA, and execute the resulting region route through Nav2.
@@ -797,4 +799,3 @@ Expected: PASS.
 git add tb4_voice_control/command_parser.py tb4_voice_control/route_planner.py tb4_voice_control/voice_app.py test/test_command_parser.py test/test_route_planner.py docs/DEMO.md
 git commit -m "feat: support spoken multi-stop routes"
 ```
-

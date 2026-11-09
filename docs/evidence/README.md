@@ -1,10 +1,12 @@
 # Evidence index
 
+> Historical audit from 2026-11-02/03; it is not current Gemini runtime or acceptance evidence. See `../TEST_MATRIX.md` and `../../PROJECT_STATUS.md` for current status.
+
 Thư mục này chỉ chứa log công khai, không chứa audio riêng tư, model Whisper,
 screenshot hoặc video. Audit phần cứng: **2026-11-02, Asia/Ho_Chi_Minh**;
 proof tự động: **2026-11-03**.
 
-## Audit môi trường hiện tại
+## Audit môi trường lịch sử
 
 | Thành phần | Kết quả | Phân loại |
 |---|---|---|

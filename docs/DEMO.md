@@ -6,11 +6,11 @@ ngoài repository khi hoàn tất.
 
 ## Chuẩn bị
 
-1. Chạy `nvidia-smi`, `arecord -l` và lưu màn hình kết quả.
-2. Source ROS/workspace, mở `voice_navigation.launch.py` đúng một lần.
+1. Chạy `arecord -l`, kiểm tra Internet/quota và export Gemini API key giới hạn quyền trong shell; không lưu key trong evidence.
+2. Tạo `.venv-speech` bằng `scripts/setup_speech_venv.sh`, source ROS/workspace, mở UI qua `scripts/run_voice_control.sh` và Nav2 đúng một lần.
 3. Undock robot, đặt initial pose trong RViz, chờ AMCL/Nav2 active.
 4. Mở `config/regions.yaml` bằng Map Editor, chỉ ra ba vùng và ba goal.
-5. Đảm bảo UI báo `CUDA — small (float16)`; model đã tải trước khi quay.
+5. Nhận biết âm thanh micro được gửi tới Google; kiểm tra transcript thật trước khi quay.
 
 ## Shot list
 
@@ -26,7 +26,7 @@ ngoài repository khi hoàn tất.
 ## File bằng chứng cần bổ sung sau khi chạy thật
 
 - ảnh Map Editor sau reload;
-- ảnh GPU/model và transcript của ba câu;
+- transcript và độ trễ yêu cầu Gemini của ba câu, không có key;
 - ảnh/terminal Nav2 cho từng route, cancel và invalid-region;
 - ảnh RViz thể hiện vật cản/đường tái lập;
 - liên kết video cuối cùng trong README hoặc release.
