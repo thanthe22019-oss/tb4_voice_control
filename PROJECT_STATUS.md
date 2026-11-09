@@ -1,11 +1,11 @@
 # TB4 Voice Control — Recovery Handoff
 
-Updated 2026-11-09 (Asia/Ho_Chi_Minh). Active worktree:
-`/home/alex/Interaction/tb4_voice_control/.worktrees/implementation`, branch
-`feature/implementation`. Base/bootstrap commit: `3161f4d`; Gemini migration
-reviewed migration range: `d53fc62..bb5e637`. Subsequent SDK compatibility fix:
-`d71307e07b8f1621eea7ecbc0209650f754e5cd7` (fresh proof below, separate from
-the reviewed milestone).
+Updated 2026-11-10 (Asia/Ho_Chi_Minh). Active checkout:
+`/home/alex/Interaction/tb4_voice_control`, branch `main`. The completed
+`feature/implementation` history was fast-forwarded into `main` through
+`5a34721`; the post-merge clean-setup fix is `5364aff`. Base/bootstrap commit:
+`3161f4d`; Gemini migration reviewed range: `d53fc62..bb5e637`; SDK
+compatibility implementation: `d71307e`.
 The original `tb4_nav2` source remains unchanged.
 
 The automated Gemini integration and offline SDK acceptance are complete locally:
@@ -16,25 +16,26 @@ semantic regions, parser, route executor and Nav2 cleanup lifecycle are retained
 Speech audio is sent to Google, requiring Internet and quota. Never record a key
 in this file or commit one.
 
-## Fresh offline verification
+## Fresh post-merge offline verification
 
-On 2026-11-09, for SDK compatibility implementation `d71307e`, with ROS Humble
-sourced and Qt offscreen:
+On 2026-11-10, on `main` after `5364aff`, with ROS Humble sourced and Qt
+offscreen:
 
-- Focused speech/SDK/delivery tests: 50 passed.
 - Explicit actual-SDK acceptance: 9 passed with Python 3.10.12 and
-  google-genai 2.33.0 in `.venv-speech`. Synthetic key + MockTransport only;
-  one request and zero retry sleep for 429 (Retry-After: 3600), 500, 503,
-  connection and timeout failures. Inline WAV, store=False, 1.25-second test
-  timeout, text extraction and disabled continuation were also verified.
+  google-genai 2.33.0 in the newly created main-checkout `.venv-speech`.
+  Synthetic key + MockTransport only; no billed Gemini request was made.
 - Full portable ROS pytest: 308 passed, 10 skipped, 2 inherited deprecation
   warnings. Skips are the existing copyright check plus 9 opt-in SDK tests.
+- The full portable suite run through `.venv-speech/bin/python` with ROS sourced
+  also passed 308 tests with the same 10 skips and 2 warnings.
 - Colcon build: 1 package finished. Colcon test: 308 passed, 10 skipped,
   2 inherited warnings. Test result: 318 tests, 0 errors, 0 failures,
   10 skipped; one package emitted the same warnings on stderr.
-- `.venv-speech/bin/python -m pip check`, Bash syntax and `git diff --check`
-  passed. Stale-provider/API inspection includes `launch/`; no active runtime
-  or operator instructions use the old provider/API.
+- Speech setup completed with google-genai 2.33.0, NumPy 1.21.5,
+  sounddevice 0.5.6 and the default input device detected. The setup now
+  validates its own imports/versions without allowing an unrelated broken
+  Ubuntu system package to abort the isolated speech setup. Bash syntax and
+  `git diff --check` passed.
 
 Mandatory separate SDK acceptance/CI command (default pytest skips it):
 
@@ -46,14 +47,6 @@ PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
 The flag fails if SDK 2.33.x is absent or incompatible. Omitting it leaves the
 SDK contract untested. Generate Content is the Python 3.10-compatible ruling;
 a later Interactions migration needs a ROS/Python upgrade and fresh SDK proof.
-
-Environment concern: the pre-existing speech venv's NumPy 1.26.4 exposes
-`test_extreme_out_of_bounds_vertices_do_not_overflow_opencv` at
-`region_validation.py:86` (overflow converting 1e100 to float32). The same
-unchanged test passes with the portable ROS environment's NumPy 1.21.5.
-No geometry code or NumPy version was changed in this speech fix. A full run
-inside the speech venv therefore remains affected; it is not represented by
-the green portable ROS suite or the separate speech SDK acceptance.
 
 ## Pending acceptance and publication
 
@@ -67,7 +60,8 @@ the green portable ROS suite or the separate speech SDK acceptance.
 Historical CUDA and microphone runs, plans and reviews are evidence of the old
 provider only and do not establish current Gemini acceptance. Their details
 remain in repository history and the explicitly marked historical plans/specs.
-Do not merge or publish without the user's next-step choice.
+The implementation is merged locally; do not publish without the user's
+GitHub authentication/remote choice.
 
 ## Resume
 
