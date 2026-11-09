@@ -37,7 +37,7 @@ class VoiceControlWindow(QMainWindow):
     def __init__(self, controller: RuntimeController, recorder, transcriber, *,
                  sample_rate: int = 16000,
                  connection_status: str = 'Nav2 chưa kiểm tra',
-                 gpu_status: str = 'GPU chưa kiểm tra', shutdown_ros=None,
+                 speech_status: str = 'Gemini API chưa kiểm tra', shutdown_ros=None,
                  shutdown_timeout_ms: int = 2000):
         """Construct widgets and two worker loops with injected adapters."""
         super().__init__()
@@ -57,7 +57,7 @@ class VoiceControlWindow(QMainWindow):
         self.resize(760, 640)
 
         self.connection_label = QLabel(connection_status)
-        self.gpu_label = QLabel(gpu_status)
+        self.speech_label = QLabel(speech_status)
         self.transcript_view = QTextEdit()
         self.transcript_view.setReadOnly(True)
         self.transcript_view.setPlaceholderText(
@@ -89,7 +89,7 @@ class VoiceControlWindow(QMainWindow):
         status_group = QGroupBox('Trạng thái hệ thống')
         status_form = QFormLayout(status_group)
         status_form.addRow('Kết nối:', self.connection_label)
-        status_form.addRow('GPU / mô hình:', self.gpu_label)
+        status_form.addRow('Nhận dạng:', self.speech_label)
         status_form.addRow('Khu vực hợp lệ:', self.valid_regions_label)
         layout.addWidget(status_group)
         layout.addWidget(QLabel('Transcript'))
@@ -345,6 +345,8 @@ def main(argv=None):
     _validate_runtime_map(semantic_map, occupancy)
     with arguments.voice_config.open(encoding='utf-8') as stream:
         config = yaml.safe_load(stream) or {}
+    if config.get('provider') != 'gemini':
+        raise ValueError('Speech provider must be exactly gemini')
 
     import rclpy
     from tb4_voice_control.nav2_backend import BasicNavigatorBackend
@@ -377,7 +379,7 @@ def main(argv=None):
         controller, recorder, transcriber,
         sample_rate=recorder.sample_rate,
         connection_status='Nav2: chờ localization / action server',
-        gpu_status=f'Gemini API — {transcriber.model}',
+        speech_status=f'Gemini API — {transcriber.model}',
         shutdown_ros=shutdown_ros,
     )
     window.show()

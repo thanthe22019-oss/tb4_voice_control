@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ! "${GEMINI_API_KEY:-}" =~ [^[:space:]] ]]; then
+    echo 'Gemini API key is required. Run: export GEMINI_API_KEY="your-api-key"' >&2
+    exit 1
+fi
+
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 SOURCE_CANDIDATE="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -45,18 +50,5 @@ set -u
 # venv packages explicitly so the speech dependencies remain importable.
 VENV_SITE="$("$VENV_PATH/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 export PYTHONPATH="$VENV_SITE${PYTHONPATH:+:$PYTHONPATH}"
-export HF_HOME="${HF_HOME:-$REPO_ROOT/.speech-model-cache}"
-
-# NVIDIA wheel installations keep runtime libraries below site-packages.
-NVIDIA_LIBRARY_PATHS=()
-for library_path in "$VENV_SITE"/nvidia/*/lib; do
-    if [[ -d "$library_path" ]]; then
-        NVIDIA_LIBRARY_PATHS+=("$library_path")
-    fi
-done
-if (( ${#NVIDIA_LIBRARY_PATHS[@]} )); then
-    NVIDIA_LIBRARY_PATH="$(IFS=:; echo "${NVIDIA_LIBRARY_PATHS[*]}")"
-    export LD_LIBRARY_PATH="$NVIDIA_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
 
 exec ros2 run tb4_voice_control voice_control "$@"

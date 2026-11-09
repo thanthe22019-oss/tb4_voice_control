@@ -12,12 +12,86 @@ from packaging.requirements import Requirement
 import pytest
 
 from tb4_voice_control import voice_app
+import yaml
 
 
 @pytest.fixture
 def project_root():
     """Return the repository checkout under test."""
     return Path(__file__).resolve().parents[1]
+
+
+def test_voice_config_uses_only_gemini_settings(project_root):
+    """The shipped runtime configuration must select the API speech provider."""
+    config = yaml.safe_load((project_root / 'config' / 'voice.yaml').read_text())
+    assert config == {
+        'provider': 'gemini', 'model': 'gemini-3.8-flash', 'language': 'vi',
+        'request_timeout_seconds': 30, 'sample_rate': 16000,
+        'max_record_seconds': 15,
+    }
+
+
+@pytest.mark.parametrize('key', [None, '', ' \t\n'])
+def test_launcher_requires_gemini_key_without_printing_secret(project_root, key):
+    """Missing credentials must win over machine-specific ROS setup failures."""
+    environment = {**os.environ, 'ROS_SETUP': '/missing/ros/setup.bash',
+                   'UNRELATED_SECRET': 'SECRET_SENTINEL'}
+    environment.pop('GEMINI_API_KEY', None)
+    if key is not None:
+        environment['GEMINI_API_KEY'] = key
+    result = subprocess.run(
+        ['bash', str(project_root / 'scripts' / 'run_voice_control.sh')],
+        capture_output=True, text=True, env=environment)
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert 'export GEMINI_API_KEY' in output
+    assert 'SECRET_SENTINEL' not in output
+    assert 'ROS setup not found' not in output
+
+
+@pytest.mark.parametrize('installed', [False, True])
+def test_launcher_has_no_cuda_runtime_mutation(project_root, tmp_path, installed):
+    """The real launcher must preserve library/cache paths and quote checkout paths."""
+    checkout = tmp_path / 'checkout with spaces'
+    scripts = (tmp_path / 'prefix with spaces' / 'share' / 'tb4_voice_control' / 'scripts'
+               if installed else checkout / 'scripts')
+    scripts.mkdir(parents=True)
+    launcher = scripts / 'run_voice_control.sh'
+    launcher.write_bytes((project_root / 'scripts' / launcher.name).read_bytes())
+    checkout.mkdir(exist_ok=True)
+    (checkout / 'setup.py').touch()
+    workspace = checkout / 'install'
+    workspace.mkdir()
+    (workspace / 'setup.bash').write_text('export WORKSPACE_ACTIVE=yes\n')
+    ros_setup = tmp_path / 'ros setup.bash'
+    ros_setup.write_text('export ROS_ACTIVE=yes\n')
+    bin_path = checkout / '.venv-speech' / 'bin'
+    bin_path.mkdir(parents=True)
+    (bin_path / 'activate').write_text(f'export PATH="{bin_path}:$PATH"\n')
+    site = checkout / 'site packages'
+    (site / 'nvidia' / 'fake' / 'lib').mkdir(parents=True)
+    python = bin_path / 'python'
+    python.write_text(f'#!/bin/sh\nprintf "%s\\n" "{site}"\n')
+    python.chmod(0o755)
+    ros2 = bin_path / 'ros2'
+    ros2.write_text(
+        '#!/bin/bash\n'
+        'printf "%s\\n" "$ROS_ACTIVE" "$WORKSPACE_ACTIVE" '
+        '"${HF_HOME-unset}" "$LD_LIBRARY_PATH" "$PYTHONPATH" "$@"\n')
+    ros2.chmod(0o755)
+    environment = {**os.environ, 'GEMINI_API_KEY': 'SECRET_SENTINEL',
+                   'ROS_SETUP': str(ros_setup), 'TB4_VOICE_CONTROL_ROOT': str(checkout),
+                   'LD_LIBRARY_PATH': '/existing/libs', 'PYTHONPATH': '/existing/python'}
+    environment.pop('HF_HOME', None)
+    result = subprocess.run(
+        ['bash', str(launcher), '--voice-config', '/config with spaces/voice.yaml'],
+        check=True, capture_output=True, text=True, env=environment)
+    assert result.stdout.splitlines() == [
+        'yes', 'yes', 'unset', '/existing/libs', f'{site}:/existing/python',
+        'run', 'tb4_voice_control', 'voice_control', '--voice-config',
+        '/config with spaces/voice.yaml',
+    ]
+    assert 'SECRET_SENTINEL' not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(('name', 'supported', 'excluded'), [

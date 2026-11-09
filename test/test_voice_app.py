@@ -2,20 +2,22 @@
 
 from dataclasses import replace
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtTest import QTest
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox
 import pytest
 
 from tb4_voice_control.regions import GoalPose
 from tb4_voice_control.route_executor import CleanupState, LegProgress, RouteState
 from tb4_voice_control.runtime_controller import RuntimeController
-from tb4_voice_control.speech import TranscriptionResult
+from tb4_voice_control.speech import SpeechModelError, TranscriptionResult
 from tb4_voice_control.voice_app import VoiceControlWindow
 
 from test_runtime_controller import CleanupBackend, runtime_map
+import yaml
 
 
 @pytest.mark.parametrize('defect,code', [
@@ -76,11 +78,9 @@ class Recorder:
 
 
 class Transcriber:
-    """Return one stable Vietnamese transcript and GPU configuration."""
+    """Return one stable Vietnamese transcript and Gemini configuration."""
 
-    device = 'cuda'
-    model_size = 'small'
-    compute_type = 'float16'
+    model = 'gemini-3.8-flash'
 
     def transcribe(self, samples, sample_rate):
         """Validate worker arguments and produce a real result object."""
@@ -149,7 +149,7 @@ def make_window(tmp_path, backend=None, recorder=None, transcriber=None,
     widget = VoiceControlWindow(
         runtime, recorder, transcriber, sample_rate=16000,
         connection_status='Nav2 sẵn sàng',
-        gpu_status='NVIDIA CUDA sẵn sàng',
+        speech_status=f'Gemini API — {transcriber.model}',
         shutdown_ros=lambda: shutdown_calls.append(True),
         shutdown_timeout_ms=shutdown_timeout_ms,
     )
@@ -181,7 +181,10 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
     """Dropping any runtime signal leaves a required diagnostic field stale."""
     widget, backend, recorder, _ = window
     assert 'Nav2 sẵn sàng' in widget.connection_label.text()
-    assert 'NVIDIA CUDA' in widget.gpu_label.text()
+    assert widget.speech_label.text() == 'Gemini API — gemini-3.8-flash'
+    labels = [label.text() for label in widget.findChildren(QLabel)]
+    assert 'Nhận dạng:' in labels
+    assert not any('CUDA' in text or 'GPU' in text for text in labels)
     assert 'Khu vực A' in widget.valid_regions_label.text()
     assert 'Phòng thí nghiệm' in widget.valid_regions_label.text()
     assert widget.record_button.text() == 'Giữ để nói'
@@ -200,6 +203,101 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
     assert not widget.text_input.isEnabled()
     assert not widget.send_button.isEnabled()
     assert widget.cancel_button.isEnabled()
+
+
+def test_main_configures_gemini_and_audio_from_yaml(tmp_path, monkeypatch):
+    """Runtime settings must reach the speech and audio adapter boundaries."""
+    import rclpy
+    from tb4_voice_control import nav2_backend, voice_app
+
+    semantic, occupancy = runtime_map(tmp_path)
+    config_path = tmp_path / 'voice.yaml'
+    config_path.write_text(yaml.safe_dump({
+        'provider': 'gemini', 'model': 'configured-gemini-model',
+        'language': 'en', 'request_timeout_seconds': 12,
+        'sample_rate': 22050, 'max_record_seconds': 7,
+    }))
+    monkeypatch.setattr(voice_app, '_parse_runtime_arguments', lambda argv: (
+        SimpleNamespace(regions='regions', voice_config=config_path), []))
+    monkeypatch.setattr(voice_app, 'load_regions', lambda path: semantic)
+    monkeypatch.setattr(voice_app, 'load_occupancy_map', lambda path: occupancy)
+    monkeypatch.setattr(rclpy, 'init', lambda **kwargs: None)
+    monkeypatch.setattr(nav2_backend, 'BasicNavigatorBackend', lambda **kwargs: Backend())
+    captured = {}
+
+    def recorder(**kwargs):
+        captured['audio'] = kwargs
+        return SimpleNamespace(sample_rate=kwargs['sample_rate'])
+
+    def transcriber(**kwargs):
+        captured['speech'] = kwargs
+        return SimpleNamespace(model='resolved-gemini-model')
+
+    def window(*args, **kwargs):
+        captured['window'] = kwargs
+        return SimpleNamespace(show=lambda: None, shutdown=lambda: None)
+
+    monkeypatch.setattr(voice_app, 'AudioRecorder', recorder)
+    monkeypatch.setattr(voice_app, 'GeminiTranscriber', transcriber)
+    monkeypatch.setattr(voice_app, 'VoiceControlWindow', window)
+    monkeypatch.setattr(voice_app, 'QApplication', SimpleNamespace(
+        instance=lambda: SimpleNamespace(exec_=lambda: 0)))
+    assert voice_app.main([]) == 0
+    assert captured['speech'] == {
+        'model': 'configured-gemini-model', 'language': 'en',
+        'request_timeout_seconds': 12.0,
+    }
+    assert captured['audio'] == {'sample_rate': 22050, 'max_record_seconds': 7.0}
+    assert captured['window']['sample_rate'] == 22050
+    assert captured['window']['speech_status'] == 'Gemini API — resolved-gemini-model'
+
+
+def test_speech_error_does_not_send_navigation_goal(app, tmp_path):
+    """A transcription failure must display an error without dispatching Nav2."""
+    class FailedTranscriber(Transcriber):
+
+        def transcribe(self, samples, sample_rate):
+            raise SpeechModelError('Gemini API request failed')
+
+    widget, backend, recorder, _ = make_window(
+        tmp_path, transcriber=FailedTranscriber())
+    try:
+        QTest.mousePress(widget.record_button, Qt.LeftButton)
+        wait_until(app, lambda: recorder.starts == 1)
+        QTest.mouseRelease(widget.record_button, Qt.LeftButton)
+        wait_until(app, lambda: 'model_error' in widget.error_label.text())
+        assert 'Gemini API request failed' in widget.error_label.text()
+        assert 'Có lỗi' in widget.status_label.text()
+        assert backend.calls == []
+        assert widget.transcript_view.toPlainText() == ''
+    finally:
+        widget.close()
+        wait_until(app, lambda: not widget.isVisible())
+
+
+@pytest.mark.parametrize('provider', [None, 'whisper', 'Gemini', 'gemini '])
+def test_main_rejects_non_gemini_provider_before_ros(tmp_path, monkeypatch, provider):
+    """Unsupported providers must fail before starting external runtime resources."""
+    import rclpy
+    from tb4_voice_control import voice_app
+
+    semantic, occupancy = runtime_map(tmp_path)
+    config_path = tmp_path / 'voice.yaml'
+    config_path.write_text(yaml.safe_dump({'provider': provider}))
+    monkeypatch.setattr(voice_app, '_parse_runtime_arguments', lambda argv: (
+        SimpleNamespace(regions='regions', voice_config=config_path), []))
+    monkeypatch.setattr(voice_app, 'load_regions', lambda path: semantic)
+    monkeypatch.setattr(voice_app, 'load_occupancy_map', lambda path: occupancy)
+    calls = []
+
+    def initialize_ros(**kwargs):
+        calls.append('ROS initialized')
+        pytest.fail('Unsupported provider reached ROS initialization')
+
+    monkeypatch.setattr(rclpy, 'init', initialize_ros)
+    with pytest.raises(ValueError, match='provider.*gemini'):
+        voice_app.main([])
+    assert calls == []
 
 
 def test_cancel_and_typed_error_restore_command_controls(window, app):
