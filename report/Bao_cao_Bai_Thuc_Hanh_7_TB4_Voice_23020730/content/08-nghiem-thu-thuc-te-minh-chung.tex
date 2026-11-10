@@ -1,0 +1,87 @@
+\section*{10. Bảng nghiệm thu thực tế, minh chứng hình ảnh và liên kết bàn giao}
+\addcontentsline{toc}{section}{10. Bảng nghiệm thu thực tế, minh chứng hình ảnh và liên kết bàn giao}
+
+Theo đúng quy tắc minh bạch bằng chứng trong \path{docs/TEST_MATRIX.md} và \path{docs/DEMO.md}, mọi hạng mục yêu cầu phần cứng micro, khóa Gemini API thực tế, phiên chạy mô phỏng Gazebo/Nav2 trực tiếp, ảnh chụp màn hình runtime, kho mã nguồn công khai và video quay demo đều được đánh dấu rõ bằng ký hiệu \pending{}. Tuyệt đối không suy diễn kết quả nghiệm thu thực tế từ các bài kiểm thử tự động giả lập.
+
+\subsection*{10.1. Bảng kiểm tra nghiệm thu thực tế và bàn giao (\texttt{MANUAL/HARDWARE PENDING})}
+\addcontentsline{toc}{subsection}{10.1. Bảng kiểm tra nghiệm thu thực tế và bàn giao (\texttt{MANUAL/HARDWARE PENDING})}
+
+\begin{longtable}{|p{0.05\textwidth}|p{0.27\textwidth}|p{0.22\textwidth}|p{0.34\textwidth}|}
+\hline
+\textbf{\#} & \textbf{Kịch bản nghiệm thu thực tế} & \textbf{Trạng thái hiện tại} & \textbf{Bằng chứng cần thu thập và cách cập nhật sau khi chạy} \\
+\hline
+\endfirsthead
+\hline
+\textbf{\#} & \textbf{Kịch bản nghiệm thu thực tế} & \textbf{Trạng thái hiện tại} & \textbf{Bằng chứng cần thu thập và cách cập nhật sau khi chạy} \\
+\hline
+\endhead
+1 & Map Editor sửa một đỉnh/goal, lưu, đóng rồi mở lại \texttt{config/regions.yaml} và xuất \texttt{segmented\_map.png} & \pending & Chụp màn hình lưu thành \path{images/02_map_editor_ui.png}; ghi xác nhận 3 vùng (\texttt{zone\_a}, \texttt{zone\_b}, \texttt{zone\_c}) tải lại đúng tọa độ và danh sách Validation trống. \\
+\hline
+2 & Lệnh giọng nói 1: \textit{``Đi đến khu vực A''} & \pending & Chụp \path{images/04_voice_command_zone_a.png} và \path{images/07_rviz_single_route.png}; điền transcript nhận dạng thực tế, độ trễ Gemini ($\text{s}$), thời gian di chuyển và kết quả Nav2 tại \texttt{zone\_a}. \\
+\hline
+3 & Lệnh giọng nói 2 (alias): \textit{``Đi đến phòng thí nghiệm''} & \pending & Chụp \path{images/05_voice_command_alias_lab.png}; ghi rõ transcript tiếng Việt, xác nhận alias \texttt{phòng thí nghiệm} được ánh xạ sang \texttt{Khu vực B} (\texttt{zone\_b}) và robot dừng đúng đích. \\
+\hline
+4 & Lệnh giọng nói 3 (đa chặng \texttt{FROM\_TO} khi robot ở ngoài \texttt{Khu vực A}): \textit{``Di chuyển từ khu vực A đến khu vực B''} & \pending & Chụp \path{images/08_multi_leg_route_and_cancel.png}; ghi nhận hàng đợi 2 chặng \texttt{Khu vực A $\rightarrow$ Khu vực B}, tiến độ chặng \texttt{1/2} và \texttt{2/2}, cùng kết quả hoàn thành tại \texttt{zone\_b}. \\
+\hline
+5 & Lệnh đa chặng \texttt{FROM\_TO} khi robot đang đứng trong \texttt{Khu vực A}: lặp lại \textit{``Di chuyển từ khu vực A đến khu vực B''} & \pending & Ghi log/ảnh giao diện xác nhận \texttt{find\_current\_region} nhận diện robot đang ở \texttt{zone\_a} và rút gọn lộ trình chỉ gửi đúng 1 chặng tới \texttt{Khu vực B} (\texttt{1/1: Khu vực B}). \\
+\hline
+6 & Xử lý vùng không tồn tại (\texttt{unknown\_region}, ví dụ nói hoặc nhập \textit{``Đi đến khu vực Z''}) & \pending & Chụp \path{images/06_invalid_region_handling.png}; xác nhận giao diện báo \texttt{[unknown\_region]} kèm danh sách vùng hợp lệ và không có goal \texttt{/navigate\_to\_pose} mới nào được gửi. \\
+\hline
+7 & Khóa lệnh mới khi đang di chuyển và hủy lộ trình (\textbf{Hủy lộ trình}) & \pending & Quay video và chụp trạng thái nút \textbf{Giữ để nói} / \textbf{Gửi lệnh văn bản} bị khóa khi \texttt{NAVIGATING}; nhấn \textbf{Hủy lộ trình} và ghi nhận trạng thái \texttt{Đã hủy lộ trình} (\texttt{CANCELED}). \\
+\hline
+8 & Nav2 tái lập đường đi và tránh vật cản trong mô phỏng & \pending & Đặt vật cản trên đường đi trong Gazebo, chụp \path{images/09_obstacle_avoidance.png} thể hiện local costmap cập nhật từ \texttt{/scan} và đường đi mới vòng qua vật cản. \\
+\hline
+9 & Độ chính xác nhận dạng Gemini API và độ trễ thực tế của 3 câu lệnh tiếng Việt & \pending & Ghi bảng đối chiếu câu nói thực tế, transcript trả về từ \texttt{gemini-3.5-transcribe} và độ trễ từng lần gọi API (tuyệt đối không ghi khóa API). \\
+\hline
+10 & Kiểm tra thiết bị micro và thu âm Push-to-Talk (\texttt{arecord -l}) & \pending & Ghi tên soundcard đầu vào từ \texttt{arecord -l} / \texttt{setup\_speech\_venv.sh} và xác nhận 3 lần nhấn--giữ--thả thu âm thành công. \\
+\hline
+11 & Liên kết GitHub repository công khai & \pending & Đẩy mã nguồn đã kiểm tra không chứa thông tin mật lên GitHub và thay placeholder bằng URL công khai. \\
+\hline
+12 & Liên kết video demo công khai (Google Drive / YouTube) & \pending & Quay đủ các cảnh trong \path{docs/DEMO.md}, tải lên và bật quyền truy cập công khai (\textit{Anyone with the link}). \\
+\hline
+\end{longtable}
+
+\subsection*{10.2. Minh chứng hình ảnh cho các kịch bản điều khiển bằng giọng nói và Nav2}
+\addcontentsline{toc}{subsection}{10.2. Minh chứng hình ảnh cho các kịch bản điều khiển bằng giọng nói và Nav2}
+
+Các khung hình dưới đây được thiết lập sẵn bằng macro \texttt{\textbackslash reportfigure}. Khi người vận hành lưu ảnh chụp màn hình vào thư mục \path{images/} với đúng tên file quy định và biên dịch lại \path{main.tex}, khung giữ chỗ sẽ tự động được thay thế bằng ảnh thực tế:
+
+\reportfigure[Cửa sổ Voice Control UI hiển thị transcript nhận dạng từ câu nói Đi đến khu vực A, \texttt{Intent: GO\_TO} -- đi đến Khu vực A, kết quả Điều hướng thành công cùng RViz2/Gazebo khi robot tới \texttt{zone\_a}]{04_voice_command_zone_a.png}{Kết quả nhận dạng và điều hướng câu lệnh bắt buộc thứ nhất: \textit{``Đi đến khu vực A''}}
+
+\reportfigure[Cửa sổ Voice Control UI hiển thị transcript Đi đến phòng thí nghiệm, phân giải alias phòng thí nghiệm thành \texttt{Intent: GO\_TO} -- đi đến Khu vực B (\texttt{zone\_b}), cùng RViz2/Gazebo khi robot tới Khu vực B]{05_voice_command_alias_lab.png}{Kết quả nhận dạng và phân giải alias cho câu lệnh bắt buộc thứ hai: \textit{``Đi đến phòng thí nghiệm''}}
+
+\reportfigure[Giao diện Voice Control UI hiển thị thông báo lỗi mã \texttt{unknown\_region} kèm danh sách Khu vực hợp lệ: Khu vực A, Khu vực B, Khu vực C và trạng thái Có lỗi -- chưa gửi thêm goal khi ra lệnh tới vùng không tồn tại]{06_invalid_region_handling.png}{Xử lý an toàn khi câu lệnh chứa tên vùng không tồn tại (\texttt{unknown\_region}) mà không gửi goal tới Nav2}
+
+\reportfigure[Cửa sổ RViz2 và Gazebo trong quá trình điều hướng đơn chặng: thể hiện bản đồ, particle cloud AMCL hội tụ, global path, local/global costmap và mô hình robot bám đường]{07_rviz_single_route.png}{Quá trình TurtleBot 4 bám đường đi toàn cục (global path) trên RViz2 và Ignition Gazebo}
+
+\reportfigure[Giao diện Voice Control UI và RViz2 khi thực hiện lệnh Di chuyển từ khu vực A đến khu vực B: hiển thị hàng đợi Khu vực A -> Khu vực B (2 chặng từ ngoài A), rút gọn 1 chặng khi đang ở A, khóa nút lệnh mới và dừng an toàn khi nhấn Hủy lộ trình]{08_multi_leg_route_and_cancel.png}{Thực thi lộ trình đa chặng (\texttt{FROM\_TO}), khóa nhận lệnh mới khi đang chạy và hủy lộ trình an toàn}
+
+\reportfigure[Cảnh Ignition Gazebo đặt vật cản trên hành lang kết hợp RViz2 hiển thị local costmap cập nhật từ /scan và đường đi Nav2 tái lập vòng qua vật cản]{09_obstacle_avoidance.png}{Nav2 cập nhật bản đồ chi phí cục bộ (local costmap) và tái lập quỹ đạo tránh vật cản trong mô phỏng}
+
+\subsection*{10.3. Ghi nhận chi tiết sau khi chạy nghiệm thu thực tế}
+\addcontentsline{toc}{subsection}{10.3. Ghi nhận chi tiết sau khi chạy nghiệm thu thực tế}
+
+\subsubsection*{10.3.1. Nhận xét kết quả nhận dạng tiếng Việt qua \texttt{gemini-3.5-transcribe}}
+\pending{}
+
+\textit{Hướng dẫn cập nhật sau khi chạy thật:} Thay thế dòng \pending{} phía trên bằng bảng hoặc đoạn mô tả kết quả 3 lần thu âm thực tế cho ba câu lệnh (\textit{``Đi đến khu vực A''}, \textit{``Đi đến phòng thí nghiệm''}, \textit{``Di chuyển từ khu vực A đến khu vực B''}), ghi rõ tên thiết bị micro từ \texttt{arecord -l}, chuỗi transcript trả về và thời gian phản hồi của Gemini API cho từng câu.
+
+\subsubsection*{10.3.2. Nhận xét kết quả điều hướng đơn chặng, đa chặng, hủy lệnh và tránh vật cản}
+\pending{}
+
+\textit{Hướng dẫn cập nhật sau khi chạy thật:} Thay thế dòng \pending{} phía trên bằng nhận xét thực tế về: (1) độ chính xác khi robot dừng tại \texttt{zone\_a} và \texttt{zone\_b} so với tọa độ trong \path{config/regions.yaml}, (2) sự khác biệt giữa lộ trình \texttt{FROM\_TO} 2 chặng (khi xuất phát ngoài \texttt{Khu vực A}) và 1 chặng (khi xuất phát trong \texttt{Khu vực A}), (3) phản ứng của robot và trạng thái giao diện khi nhấn \textbf{Hủy lộ trình}, và (4) khả năng tái lập kế hoạch của Nav2 khi đặt thêm vật cản trong Gazebo.
+
+\subsection*{10.4. Liên kết sản phẩm bàn giao}
+\addcontentsline{toc}{subsection}{10.4. Liên kết sản phẩm bàn giao}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{GitHub repository công khai:} \pending{} -- \textit{[CHÈN URL GITHUB PUBLIC SAU KHI ĐẨY MÃ NGUỒN ĐÃ KIỂM TRA KHÔNG CHỨA API KEY]}
+  \item \textbf{Video demo thực tế (Google Drive / YouTube):} \pending{} -- \textit{[CHÈN URL VIDEO DEMO VÀ BẬT QUYỀN TRUY CẬP CÔNG KHAI ``ANYONE WITH THE LINK'']}
+  \item \textbf{Các file dữ liệu bản đồ và cấu hình đã xác minh trong repository:}
+  \begin{itemize}
+    \item Bản đồ Occupancy Grid gốc: \path{maps/map.yaml} và \path{maps/map.pgm} ($788 \times 1101\,\text{px}$, độ phân giải $0{,}05\,\text{m/px}$);
+    \item Cấu hình vùng ngữ nghĩa: \path{config/regions.yaml} (\texttt{zone\_a}, \texttt{zone\_b}, \texttt{zone\_c});
+    \item Ảnh bản đồ phân vùng đã kết xuất: \path{artifacts/segmented_map.png} (bản sao trong báo cáo: \path{images/segmented_map.png});
+    \item Cấu hình nhận dạng giọng nói: \path{config/voice.yaml} (\texttt{gemini-3.5-transcribe}, mono $16\,\text{kHz}$, timeout $120\,\text{s}$).
+  \end{itemize}
+\end{itemize}

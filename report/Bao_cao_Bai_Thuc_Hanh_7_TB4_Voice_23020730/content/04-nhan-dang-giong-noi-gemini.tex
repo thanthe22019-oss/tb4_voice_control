@@ -1,0 +1,107 @@
+\section*{6. Pipeline nhận dạng giọng nói tiếng Việt qua Gemini API}
+\addcontentsline{toc}{section}{6. Pipeline nhận dạng giọng nói tiếng Việt qua Gemini API}
+
+\subsection*{6.1. Lý do loại bỏ suy luận cục bộ NVIDIA/CUDA và chuyển sang kiến trúc Gemini-only}
+\addcontentsline{toc}{subsection}{6.1. Lý do loại bỏ suy luận cục bộ NVIDIA/CUDA và chuyển sang kiến trúc Gemini-only}
+
+Trong giai đoạn khảo sát ban đầu của dự án (xem hồ sơ kiểm toán lịch sử ngày 02--03/11/2026 tại \path{docs/evidence/README.md}), phương án nhận dạng giọng nói cục bộ trên GPU NVIDIA (Whisper/CUDA) đã được thử nghiệm nhưng gặp rào cản phần cứng và môi trường hệ thống:
+\begin{itemize}[leftmargin=1.2cm]
+  \item Lệnh kiểm tra trình điều khiển \texttt{nvidia-smi} trả về mã lỗi \texttt{9} (\textit{``NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver''}), khiến các thư viện suy luận CUDA không thể khởi tạo trên máy trạm hiện tại.
+  \item Việc cài đặt các thư viện học sâu cục bộ trực tiếp vào môi trường Python~3.10 của ROS~2 Humble tiềm ẩn xung đột ABI nghiêm trọng với các gói mở rộng C/C++ của hệ thống (đặc biệt là yêu cầu \texttt{numpy<2} của \texttt{python3-opencv} và các gói ROS~2 trên Ubuntu~22.04).
+\end{itemize}
+
+Từ quyết định kiến trúc đó, toàn bộ nhánh mã nguồn suy luận cục bộ đã được loại bỏ khỏi runtime chính và thay thế hoàn toàn bằng kiến trúc \textbf{Gemini-only} (\path{tb4_voice_control/speech.py}). Các tài liệu hoặc log kiểm thử CUDA/Whisper trước đây chỉ được giữ lại như lịch sử quyết định kỹ thuật, không dùng làm bằng chứng vận hành cho phiên bản cuối.
+
+Để bảo vệ môi trường ROS~2 Humble, các thư viện phục vụ thu âm và gọi Gemini API được cô lập trong môi trường ảo \path{.venv-speech} (tạo bằng \texttt{python3 -m venv --system-site-packages .venv-speech}) với các ràng buộc phiên bản chặt chẽ trong \path{requirements-speech.txt}:
+
+\begin{svcode}
+google-genai>=2.33,<2.34
+numpy<2
+sounddevice>=0.4.6,<1.0
+\end{svcode}
+
+Phiên bản thực tế đã được xác minh khi chạy kịch bản cài đặt là \texttt{google-genai==2.33.0}, \texttt{numpy==1.21.5} và \texttt{sounddevice==0.5.6} trên Python~3.10.12.
+
+\subsection*{6.2. Cấu hình thu âm Push-to-Talk và mã hóa WAV nội bộ trong RAM}
+\addcontentsline{toc}{subsection}{6.2. Cấu hình thu âm Push-to-Talk và mã hóa WAV nội bộ trong RAM}
+
+Thông số vận hành của bộ nhận dạng được khai báo tại \path{config/voice.yaml}:
+
+\begin{svcode}
+sample_rate: 16000
+max_record_seconds: 15
+provider: gemini
+model: gemini-3.5-transcribe
+language: vi
+request_timeout_seconds: 120
+\end{svcode}
+
+Khi khởi động \texttt{voice\_control} (\path{tb4_voice_control/voice_app.py}), chương trình kiểm tra bắt buộc \texttt{provider == 'gemini'}; mọi giá trị khác đều bị từ chối ngay bằng ngoại lệ \texttt{ValueError('Speech provider must be exactly gemini')}.
+
+Quá trình thu âm và tiền xử lý âm thanh diễn ra qua hai bước:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Thu âm nhấn--giữ (\textit{Push-to-Talk}) an toàn luồng (\texttt{AudioRecorder}):}
+  Khi người dùng nhấn và giữ nút \textbf{Giữ để nói} trên giao diện, tín hiệu \texttt{pressed} kích hoạt \texttt{SpeechWorker.start\_recording()} trên một \texttt{QThread} riêng. Lớp \texttt{AudioRecorder} (\path{tb4_voice_control/audio_capture.py}) chỉ nạp mô-đun \texttt{sounddevice} khi bắt đầu thu (\textit{lazy import}) và mở luồng \texttt{InputStream(samplerate=16000, channels=1, dtype='float32')}. Hàm gọi lại âm thanh (\texttt{\_audio\_callback}) sao chép từng khối mẫu đơn kênh (\texttt{mono}) vào danh sách bộ đệm dưới khóa \texttt{threading.Lock}, đồng thời giới hạn tổng số mẫu thu được không vượt quá $\text{sample\_rate} \times \text{max\_record\_seconds} = 16000 \times 15 = 240\,000$ mẫu. Khi người dùng thả nút (\texttt{released}), luồng thu được đóng an toàn và trả về một mảng liên tục \texttt{np.ndarray} kiểu \texttt{float32}.
+
+  \item \textbf{Mã hóa PCM16 WAV trong bộ nhớ (\texttt{\_encode\_wav}):}
+  Hàm \texttt{\_encode\_wav} trong \path{tb4_voice_control/speech.py} giới hạn biên độ mẫu \texttt{audio} vào đoạn $[-1, 1]$, nhân với $32767$ để lượng tử hóa sang số nguyên 16-bit có dấu thứ tự byte nhỏ trước (\texttt{<i2}), rồi đóng gói thành luồng WAV chuẩn (1 kênh, độ rộng mẫu 2 byte, tần số $16\,000\,\text{Hz}$) trực tiếp trong bộ đệm \texttt{io.BytesIO()} và mã hóa sang chuỗi ASCII Base64. Không có bất kỳ file âm thanh \texttt{.wav} tạm thời nào được ghi xuống ổ cứng, giúp bảo vệ quyền riêng tư của dữ liệu giọng nói.
+\end{enumerate}
+
+\subsection*{6.3. Giao thức gọi Generate Content API và bảo mật thông tin xác thực}
+\addcontentsline{toc}{subsection}{6.3. Giao thức gọi Generate Content API và bảo mật thông tin xác thực}
+
+Lớp \texttt{GeminiTranscriber} (\path{tb4_voice_control/speech.py}) khởi tạo đối tượng \texttt{genai.Client(api\_key=api\_key)} theo cơ chế khởi tạo trễ (\textit{lazy initialization}) ở lần nhận dạng đầu tiên. Khóa xác thực chỉ được đọc từ biến môi trường của tiến trình:
+\begin{equation*}
+  \texttt{api\_key = os.environ.get('GEMINI\_API\_KEY', '').strip()}
+\end{equation*}
+Không có khóa API nào được lưu trong file cấu hình, mã nguồn, log kiểm thử hay tài liệu báo cáo. Kịch bản \path{scripts/setup_speech_venv.sh} chỉ in trạng thái \texttt{GEMINI\_API\_KEY: present} hoặc \texttt{absent}, và \path{scripts/run_voice_control.sh} kiểm tra biến môi trường có ký tự khác khoảng trắng trước khi nạp ROS và mở giao diện.
+
+Mỗi yêu cầu nhận dạng gửi tới phương thức \texttt{client.models.generate\_content(**request)} có cấu trúc:
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Mô hình đích (\texttt{model}):} \texttt{gemini-3.5-transcribe}.
+  \item \textbf{Nội dung (\texttt{contents}):} Gồm một lượt \texttt{role: 'user'} với hai phần (\texttt{parts}): (1) câu lệnh hướng dẫn tiếng Việt nghiêm ngặt \textit{``Chuyển lời nói tiếng Việt trong audio thành đúng một câu lệnh điều hướng. Chỉ trả về nguyên văn câu lệnh; nếu không nghe rõ, trả về chuỗi rỗng. Không giải thích.''}, và (2) khối \texttt{inline\_data} chứa dữ liệu WAV Base64 với \texttt{mime\_type: 'audio/wav'}.
+  \item \textbf{Cấu hình quyền riêng tư và thời gian chờ (\texttt{config}):} Đặt \texttt{store: False} (yêu cầu không lưu trữ dữ liệu phía dịch vụ), \texttt{automatic\_continuation: False} và \texttt{http\_options: \{'timeout': request\_timeout\_seconds * 1000\}} (tương ứng $120\,000\,\text{ms}$ tức $120\,\text{s}$). Trong SDK \texttt{google-genai} 2.33.x, việc không cấu hình \texttt{retry\_options} đảm bảo tầng giao vận HTTP chỉ thực hiện đúng một lần gửi duy nhất cho mỗi thao tác thả nút, không tự động gửi lặp gây trễ ngầm.
+\end{itemize}
+
+\subsection*{6.4. Giải mã phản hồi chuyên biệt (\texttt{audio\_transcription}) và phân loại lỗi}
+\addcontentsline{toc}{subsection}{6.4. Giải mã phản hồi chuyên biệt (\texttt{audio\_transcription}) và phân loại lỗi}
+
+Một điểm kỹ thuật quan trọng đã được phát hiện và xử lý trong quá trình hoàn thiện adapter (commit \texttt{80aeed5}) là cấu trúc phản hồi của mô hình chuyên biệt \texttt{gemini-3.5-transcribe}. Khác với các mô hình sinh văn bản đa dụng trả kết quả trực tiếp qua thuộc tính \texttt{response.text}, mô hình \texttt{gemini-3.5-transcribe} trả về các đoạn văn bản nhận dạng bên trong trường \texttt{part.audio\_transcription.text} của ứng viên đầu tiên (\texttt{response.candidates[0].content.parts}).
+
+Hàm \texttt{\_transcription\_text(response)} trong \path{tb4_voice_control/speech.py} xử lý cả hai định dạng theo thứ tự ưu tiên:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item Duyệt tuần tự qua danh sách \texttt{response.candidates[0].content.parts}, trích xuất mọi chuỗi hợp lệ từ \texttt{part.audio\_transcription.text}, cắt khoảng trắng hai đầu (\texttt{strip()}) và ghép các đoạn không rỗng bằng đúng một dấu cách (\texttt{' '.join(...)}).
+  \item Nếu danh sách \texttt{parts} không chứa trường \texttt{audio\_transcription}, hàm lùi về đọc thuộc tính \texttt{response.text.strip()} để giữ tương thích ngược.
+  \item Nếu phản hồi có cấu trúc hợp lệ nhưng chuỗi văn bản rỗng (\texttt{""}, ví dụ khi micro thu khoảng lặng hoặc không nghe rõ), hàm vẫn trả về \texttt{""} hợp lệ để bộ điều khiển trung tâm báo mã \texttt{empty\_transcript}. Chỉ khi cả hai nguồn đều là \texttt{None}, hàm mới phát sinh lỗi \texttt{SpeechModelError('Speech service returned a malformed transcript.')}.
+\end{enumerate}
+
+Khi xảy ra ngoại lệ trong quá trình gọi API, hàm \texttt{\_api\_error\_message(error)} chỉ dựa vào tên lớp ngoại lệ (\texttt{\_\_mro\_\_}) và mã trạng thái HTTP (\texttt{status\_code}/\texttt{code}) để tạo thông báo hướng dẫn người dùng, tuyệt đối không in nguyên văn chuỗi lỗi từ máy chủ bên ngoài nhằm tránh rò rỉ thông tin nhạy cảm:
+
+\begin{longtable}{|p{0.34\textwidth}|p{0.56\textwidth}|}
+\hline
+\textbf{Điều kiện lỗi / Mã HTTP} & \textbf{Thông báo chuẩn hóa (\texttt{SpeechModelError})} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Điều kiện lỗi / Mã HTTP} & \textbf{Thông báo chuẩn hóa (\texttt{SpeechModelError})} \\
+\hline
+\endhead
+Thiếu biến môi trường \texttt{GEMINI\_API\_KEY} & \texttt{Speech setup requires GEMINI\_API\_KEY.} \\
+\hline
+Lỗi khởi tạo SDK / cấu hình client & \texttt{Speech setup failed; check google-genai installation and configuration.} \\
+\hline
+HTTP \texttt{504}, \texttt{TimeoutError}, \texttt{TimeoutException}, \texttt{APITimeoutError} & \texttt{Speech transcription timeout; try again.} \\
+\hline
+HTTP \texttt{401} hoặc HTTP \texttt{403} & \texttt{Speech authentication failed; check GEMINI\_API\_KEY.} \\
+\hline
+HTTP \texttt{429} & \texttt{Speech rate limit reached; try again later.} \\
+\hline
+\texttt{ConnectionError}, \texttt{TransportError}, \texttt{APIConnectionError} & \texttt{Speech network connection failed; check connectivity.} \\
+\hline
+Các lỗi API/vận chuyển khác & \texttt{Speech transcription failed; try again.} \\
+\hline
+Phản hồi không chứa dữ liệu transcript (\texttt{None}) & \texttt{Speech service returned a malformed transcript.} \\
+\hline
+\end{longtable}
+
+\reportfigure[Giao diện Voice Control UI ở trạng thái sẵn sàng, hiển thị rõ nhãn Gemini API — gemini-3.5-transcribe, Khu vực hợp lệ: Khu vực A, Khu vực B, Khu vực C, nút Giữ để nói, Hủy lộ trình và ô nhập văn bản (không lộ API key)]{03_voice_control_ui.png}{Giao diện điều khiển bằng giọng nói (\texttt{VoiceControlWindow}) kết nối mô hình \texttt{gemini-3.5-transcribe}}

@@ -1,0 +1,59 @@
+\section*{9. Kết quả kiểm thử tự động đã xác minh và lịch sử chẩn đoán}
+\addcontentsline{toc}{section}{9. Kết quả kiểm thử tự động đã xác minh và lịch sử chẩn đoán}
+
+\subsection*{9.1. Tổng hợp kết quả kiểm thử tự động trên nhánh \texttt{main} đã hợp nhất}
+\addcontentsline{toc}{subsection}{9.1. Tổng hợp kết quả kiểm thử tự động trên nhánh \texttt{main} đã hợp nhất}
+
+Toàn bộ các mô-đun hình học bản đồ, kiểm tra vùng ngữ nghĩa, kết xuất ảnh, giao diện Map Editor (chế độ offscreen), bộ thu âm, bộ chuyển đổi Gemini API, bộ phân tích câu lệnh tiếng Việt, bộ lập lộ trình, bộ thực thi đa chặng và vòng đời hủy lệnh Nav2 đã được kiểm thử tự động và hợp nhất vào nhánh \texttt{main} (qua commit \texttt{80aeed5} và \texttt{5f7e151}). Bảng dưới đây tổng hợp các số liệu kiểm thử tự động đã được xác minh trên repository:
+
+\begin{longtable}{|p{0.29\textwidth}|p{0.34\textwidth}|p{0.27\textwidth}|}
+\hline
+\textbf{Hạng mục kiểm thử tự động} & \textbf{Lệnh thực thi / Phạm vi kiểm tra} & \textbf{Kết quả đã xác minh} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Hạng mục kiểm thử tự động} & \textbf{Lệnh thực thi / Phạm vi kiểm tra} & \textbf{Kết quả đã xác minh} \\
+\hline
+\endhead
+Kiểm thử đơn vị mô-đun nhận dạng (\texttt{test\_speech.py}) & Kiểm tra mã hóa WAV PCM16, ghép nối \texttt{audio\_transcription.text}, lùi về \texttt{response.text}, ánh xạ HTTP \texttt{504} thành timeout và xử lý lỗi API. & \textbf{33 passed} (\texttt{AUTOMATED PASS}) \\
+\hline
+Kiểm thử chấp nhận hợp đồng SDK thật ngoại tuyến (\texttt{test\_speech\_sdk.py}) & Chạy qua \texttt{.venv-speech/bin/python -m pytest -q test/test\_speech\_sdk.py --run-speech-sdk} với \texttt{google-genai==2.33.0}, khóa giả lập và \texttt{httpx.MockTransport} (kiểm tra WAV inline, \texttt{store=False}, \texttt{automatic\_continuation=False}, timeout $120\,\text{s}$, gửi đúng 1 lần không retry, giải mã phản hồi chuyên biệt và mã HTTP 200/401/403/429/504/5xx). & \textbf{11 passed} (\texttt{AUTOMATED PASS} -- ngoại tuyến) \\
+\hline
+Toàn bộ bộ kiểm thử \texttt{pytest} của gói (với ROS~2 Humble và \texttt{QT\_QPA\_PLATFORM=offscreen}) & Kiểm tra toàn diện \texttt{map\_model}, \texttt{regions}, \texttt{region\_validation}, \texttt{editor\_document}, \texttt{map\_canvas}, \texttt{map\_editor}, \texttt{map\_render}, \texttt{audio\_capture}, \texttt{speech}, \texttt{command\_parser}, \texttt{route\_planner}, \texttt{route\_executor}, \texttt{runtime\_controller}, \texttt{nav2\_backend}, \texttt{voice\_app}, \texttt{navigate\_goals}, \texttt{goal\_recorder} và \texttt{install\_assets}. & \textbf{317 passed, 12 skipped, 2 warnings} (\texttt{AUTOMATED PASS}) \\
+\hline
+Biên dịch và kiểm thử chuẩn ROS~2 qua \texttt{colcon} & \texttt{colcon build}, \texttt{colcon test} và \texttt{colcon test-result --verbose} cho gói \texttt{tb4\_voice\_control}. & \textbf{1 package finished; 329 tests, 0 errors, 0 failures, 12 skipped} (\texttt{AUTOMATED PASS}) \\
+\hline
+Kiểm tra tài nguyên cài đặt và 6 CLI entry points & Xác minh 12/12 file cấu hình/bản đồ/launch/script trong \texttt{share/tb4\_voice\_control}; chạy \texttt{--help} cho cả 6 lệnh; chạy \texttt{validate\_regions} và \texttt{render\_segmented\_map}. & \textbf{12/12 file có mặt; 6/6 CLI exit 0; 3 valid regions; xuất PNG $788 \times 1101$} (\texttt{AUTOMATED PASS}) \\
+\hline
+Kiểm tra vệ sinh mã nguồn và rà soát thông tin mật & Chạy \texttt{git diff --check} và quét mẫu tiền tố khóa xác thực trên toàn bộ cây mã nguồn. & \textbf{0 lỗi định dạng; 0 lộ khóa xác thực} (\texttt{AUTOMATED PASS}) \\
+\hline
+\end{longtable}
+
+\subsection*{9.2. Giải trình chi tiết về 12 mục \texttt{skipped} và 2 cảnh báo kế thừa (\texttt{warnings})}
+\addcontentsline{toc}{subsection}{9.2. Giải trình chi tiết về 12 mục \texttt{skipped} và 2 cảnh báo kế thừa (\texttt{warnings})}
+
+Để đảm bảo tính minh bạch trong kiểm toán chất lượng phần mềm, các con số \texttt{12 skipped} và \texttt{2 warnings} trong kết quả \texttt{pytest} / \texttt{colcon test} cần được hiểu đúng bản chất kỹ thuật như sau (không phải lỗi thực thi và cũng không được tính gộp thành bằng chứng chạy thực tế):
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Ý nghĩa của 12 bài kiểm thử được bỏ qua có chủ đích (\texttt{12 skipped}):}
+  \begin{enumerate}
+    \item \textbf{01 bài kiểm thử bản quyền mẫu (\texttt{test/test\_copyright.py}):} Được đánh dấu \texttt{@pytest.mark.skip} mặc định theo khung mẫu \texttt{ament\_python} ban đầu của gói.
+    \item \textbf{11 bài kiểm thử SDK chuyên biệt (\texttt{test/test\_speech\_sdk.py}):} Đây là các bài kiểm thử chỉ chạy khi được bật tường minh (\textit{opt-in}). Khi lệnh \texttt{pytest} hoặc \texttt{colcon test} không truyền cờ \texttt{--run-speech-sdk}, cả 11 bài đều được bỏ qua, bất kể trình thông dịch Python đang dùng. Khi bật cờ này, môi trường thực thi còn phải có SDK \texttt{google-genai} tương thích, được cài riêng trong \path{.venv-speech}. Lệnh nghiệm thu \texttt{.venv-speech/bin/python ... --run-speech-sdk} đáp ứng cả hai điều kiện và đã cho kết quả \textbf{11 passed}.
+  \end{enumerate}
+  \item \textbf{Ý nghĩa của 2 cảnh báo kế thừa (\texttt{2 inherited warnings}):}
+  Cả hai cảnh báo đều là \texttt{DeprecationWarning: SelectableGroups dict interface is deprecated} phát sinh từ thư viện \texttt{importlib.metadata} và các plugin điểm nhập của hệ thống Ubuntu~22.04 / ROS~2 Humble khi khởi tạo \texttt{pytest}, hoàn toàn không bắt nguồn từ mã nguồn của \texttt{tb4\_voice\_control}.
+  \item \textbf{Sự chênh lệch giữa 317 passed của \texttt{pytest} và 329 tests của \texttt{colcon test-result}:}
+  Trình báo cáo \texttt{colcon test-result} tổng hợp tổng số mục kiểm thử bao gồm cả 317 bài kiểm thử vượt qua và 12 bài kiểm thử ở trạng thái \texttt{skipped} ($317 + 12 = 329$ tests), với \texttt{0 errors} và \texttt{0 failures}.
+\end{itemize}
+
+\subsection*{9.3. Lịch sử chẩn đoán kết nối Gemini API và giới hạn của bằng chứng 3,2 giây}
+\addcontentsline{toc}{subsection}{9.3. Lịch sử chẩn đoán kết nối Gemini API và giới hạn của bằng chứng 3,2 giây}
+
+Trong quá trình hoàn thiện tầng giao tiếp Gemini API ngày 10/11/2026 (được ghi nhận trong \path{PROJECT_STATUS.md}), nhóm phát triển đã thực hiện một số bước chẩn đoán kỹ thuật quan trọng:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Điều chỉnh ngưỡng thời gian chờ yêu cầu (\texttt{request\_timeout\_seconds}):}
+  Ở cấu hình ban đầu với ngưỡng chờ $30\,\text{s}$, các yêu cầu suy luận thử nghiệm nhiều lần nhận mã lỗi HTTP \texttt{504} (Gateway Timeout). Khi nâng thời hạn chờ lên $120\,\text{s}$ (commit \texttt{86e82d7}), yêu cầu qua adapter WAV nội tuyến đã nhận được phản hồi hoàn chỉnh. Từ kết quả đó, giá trị mặc định trong \path{config/voice.yaml} được ấn định là \texttt{request\_timeout\_seconds: 120}, đồng thời mã HTTP \texttt{504} được ánh xạ tường minh về thông báo \texttt{Speech transcription timeout; try again.}.
+  \item \textbf{Chẩn đoán định dạng phản hồi của mô hình \texttt{gemini-3.5-transcribe} (phản hồi khoảng 3,2 giây):}
+  Trong phiên chẩn đoán tiếp theo với cùng hình dạng yêu cầu (request shape) của môi trường sản xuất, mô hình đa dụng \texttt{gemini-3.8-flash} gặp lỗi HTTP \texttt{504} sau khoảng $107\,\text{s}$, trong khi mô hình chuyên biệt \texttt{gemini-3.5-transcribe} trả kết quả về chỉ sau \textbf{khoảng 3,2 giây} với cấu trúc dữ liệu chuyên biệt \texttt{audio\_transcription} nằm trong \texttt{candidates[0].content.parts}. Phiên bản adapter cũ chỉ đọc thuộc tính \texttt{response.text} nên đã báo nhầm phản hồi hợp lệ này là \texttt{malformed transcript}. Bản vá tại commit \texttt{80aeed5} đã bổ sung hàm \texttt{\_transcription\_text} để giải mã chính xác các đoạn \texttt{audio\_transcription.text}.
+  \item \textbf{Giới hạn bắt buộc khi diễn giải kết quả chẩn đoán 3,2 giây:}
+  Kết quả phản hồi trong khoảng $3{,}2\,\text{s}$ nêu trên \textbf{chỉ chứng minh tính tương thích của giao thức kết nối và cấu trúc giải mã phản hồi (\textit{response-contract evidence})}, \textbf{không chứng minh độ chính xác nhận dạng tiếng Việt} cho ba câu lệnh điều hướng bắt buộc của bài thực hành. Độ chính xác nhận dạng giọng nói thực tế và thời gian phản hồi cho từng câu lệnh vẫn ở trạng thái chờ nghiệm thu thực tế (\pending{}) với khóa API giới hạn quyền mới sau khi thu hồi các khóa chẩn đoán cũ.
+\end{enumerate}

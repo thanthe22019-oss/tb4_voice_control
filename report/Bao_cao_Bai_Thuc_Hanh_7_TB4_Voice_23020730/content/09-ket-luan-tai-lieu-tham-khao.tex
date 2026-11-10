@@ -1,0 +1,41 @@
+\section*{11. Kết luận, hạn chế hiện tại và hướng phát triển}
+\addcontentsline{toc}{section}{11. Kết luận, hạn chế hiện tại và hướng phát triển}
+
+\subsection*{11.1. Kết luận về các phần việc đã hoàn thành và xác minh tự động}
+\addcontentsline{toc}{subsection}{11.1. Kết luận về các phần việc đã hoàn thành và xác minh tự động}
+
+Trong khuôn khổ Bài thực hành 7, gói phần mềm ROS~2 Humble \texttt{tb4\_voice\_control} đã được thiết kế, cài đặt hoàn chỉnh và xác minh bằng bộ kiểm thử tự động trên nhánh \texttt{main} với các kết quả cốt lõi sau:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Hoàn thiện phân vùng bản đồ ngữ nghĩa và công cụ Map Editor:} Đã xây dựng mô hình \texttt{SemanticMap} tách biệt hoàn toàn khỏi bản đồ Occupancy Grid gốc (\path{maps/map.yaml}, \path{maps/map.pgm}), cung cấp giao diện đồ họa \texttt{map\_editor} hỗ trợ vẽ/chỉnh sửa đa giác, đặt goal/yaw, hoàn tác 100 bước, kiểm tra 8 nhóm ràng buộc hình học--ngữ nghĩa và lưu trữ nguyên tử. Ba vùng \texttt{Khu vực A} (\texttt{zone\_a}), \texttt{Khu vực B} (\texttt{zone\_b}, có alias \textit{``phòng thí nghiệm''}) và \texttt{Khu vực C} (\texttt{zone\_c}) trong \path{config/regions.yaml} đã được kiểm chứng hợp lệ (\texttt{3 valid regions}) và kết xuất thành ảnh minh chứng \path{artifacts/segmented_map.png}.
+  \item \textbf{Hoàn thiện pipeline nhận dạng tiếng Việt qua Gemini API:} Đã chuyển đổi hoàn toàn sang kiến trúc đám mây sử dụng mô hình \texttt{gemini-3.5-transcribe} trong môi trường ảo cô lập \path{.venv-speech} (\texttt{google-genai==2.33.0}, \texttt{numpy==1.21.5}, \texttt{sounddevice==0.5.6}), mã hóa âm thanh push-to-talk mono $16\,\text{kHz}$ PCM16 WAV trực tiếp trong RAM với \texttt{store=False}, giải mã chính xác các đoạn \texttt{audio\_transcription.text} và chuẩn hóa thông báo lỗi an toàn mà không làm lộ khóa \texttt{GEMINI\_API\_KEY}.
+  \item \textbf{Hoàn thiện bộ phân tích câu lệnh, lập lộ trình đa chặng và kết nối Nav2:} Đã cài đặt bộ phân tích cú pháp tiếng Việt tất định cho \texttt{GO\_TO} và \texttt{FROM\_TO}, giải quyết alias theo nguyên tắc khớp dài nhất, từ chối an toàn các vùng không tồn tại (\texttt{unknown\_region}), rút gọn lộ trình thông minh theo vị trí hiện tại của robot trên \texttt{/amcl\_pose}, khóa nhận lệnh mới khi đang di chuyển và quản lý chặt chẽ vòng đời hủy lệnh (\texttt{CLEANING} / \texttt{FORCE\_ABORTED}) với Action \texttt{/navigate\_to\_pose}.
+  \item \textbf{Xác minh bằng bộ kiểm thử tự động toàn diện:} Đạt \textbf{317 passed, 12 skipped, 2 inherited warnings} khi chạy \texttt{pytest}; đạt \textbf{11 passed} cho bộ kiểm thử hợp đồng SDK ngoại tuyến (\texttt{--run-speech-sdk}); và đạt \textbf{329 tests, 0 errors, 0 failures, 12 skipped} qua \texttt{colcon test-result --verbose}.
+\end{enumerate}
+
+\subsection*{11.2. Trạng thái nghiệm thu vận hành thực tế}
+\addcontentsline{toc}{subsection}{11.2. Trạng thái nghiệm thu vận hành thực tế}
+
+\pending{}
+
+\textit{Ghi chú trạng thái hiện tại:} Mặc dù toàn bộ kiến trúc phần mềm, hợp đồng giao tiếp SDK và kiểm thử tự động đã hoàn tất (\texttt{AUTOMATED PASS}), các hạng mục nghiệm thu vận hành trực tiếp bao gồm thu âm qua micro thật với khóa \texttt{GEMINI\_API\_KEY} giới hạn quyền mới, đánh giá độ chính xác nhận dạng tiếng Việt cho 3 câu lệnh bắt buộc, chạy điều hướng end-to-end trong Ignition Gazebo/Nav2 (đơn chặng, đa chặng \texttt{FROM\_TO}, từ chối vùng sai, hủy lộ trình, tránh vật cản), chụp 9 ảnh màn hình runtime và công bố liên kết GitHub/video demo vẫn đang ở trạng thái chờ người vận hành thực hiện (\texttt{MANUAL/HARDWARE PENDING}). Sau khi hoàn tất phiên chạy thực tế, người thực hiện cần thay thế dòng \pending{} phía trên bằng đoạn xác nhận kết quả thực nghiệm cuối cùng.
+
+\subsection*{11.3. Hạn chế hiện tại và hướng phát triển}
+\addcontentsline{toc}{subsection}{11.3. Hạn chế hiện tại và hướng phát triển}
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Phụ thuộc vào kết nối mạng Internet và hạn ngạch đám mây:} Do sử dụng Gemini API để nhận dạng giọng nói, hệ thống yêu cầu kết nối mạng ổn định và hạn ngạch (quota) hợp lệ cho mỗi lần thả nút thu âm; độ trễ mạng có thể dao động tùy thời điểm (đã được bảo vệ bằng ngưỡng timeout $120\,\text{s}$ và ánh xạ lỗi HTTP \texttt{504}).
+  \item \textbf{Ngữ pháp câu lệnh cố định:} Bộ phân tích hiện tập trung vào hai mẫu câu chuẩn \texttt{GO\_TO} và \texttt{FROM\_TO} nhằm đảm bảo tính tất định và không đoán mò chuỗi con; các câu nói tự do ngoài mẫu hoặc chuỗi lệnh nhiều hơn 2 điểm dừng (\textit{multi-stop tour} qua 3--4 vùng liên tiếp) chưa được mở rộng.
+  \item \textbf{Hướng phát triển tiếp theo:} (1) Bổ sung hiển thị trực tiếp các đa giác vùng ngữ nghĩa (\texttt{visualization\_msgs/msg/MarkerArray}) lên không gian 3D của RViz2 để đồng bộ trực quan với Map Editor; (2) mở rộng ngữ pháp hỗ trợ chuỗi hành trình qua nhiều điểm trung gian (\textit{``Đi qua khu vực A, khu vực C rồi đến phòng thí nghiệm''}); và (3) nâng cấp lên nền tảng ROS~2 / Python mới hơn khi chuyển đổi sang thế hệ API tương tác thời gian thực độ trễ thấp.
+\end{itemize}
+
+\section*{12. Tài liệu tham khảo}
+\addcontentsline{toc}{section}{12. Tài liệu tham khảo}
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item Clearpath Robotics, \textit{TurtleBot 4 User Manual -- Tutorials \& Navigation}: \url{https://turtlebot.github.io/turtlebot4-user-manual/}
+  \item Clearpath Robotics, \textit{TurtleBot 4 Simulator Repository}: \url{https://github.com/turtlebot/turtlebot4_simulator}
+  \item Open Robotics, \textit{ROS 2 Humble Hawksbill Documentation}: \url{https://docs.ros.org/en/humble/}
+  \item Open Navigation LLC, \textit{Nav2 Documentation (\texttt{NavigateToPose}, \texttt{nav2\_simple\_commander}, AMCL \& Costmap 2D)}: \url{https://docs.nav2.org/}
+  \item Google, \textit{Google Gen AI Python SDK (\texttt{google-genai}) Documentation}: \url{https://googleapis.github.io/python-genai/}
+  \item Riverbank Computing, \textit{PyQt5 Reference Guide (\texttt{QGraphicsView}, \texttt{QThread}, Signals and Slots)}: \url{https://www.riverbankcomputing.com/static/Docs/PyQt5/}
+\end{enumerate}

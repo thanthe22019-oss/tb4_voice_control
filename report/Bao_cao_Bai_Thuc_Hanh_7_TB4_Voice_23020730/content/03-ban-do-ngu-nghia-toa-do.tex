@@ -1,0 +1,109 @@
+\section*{5. Bản đồ ngữ nghĩa, quy đổi tọa độ Pixel--ROS và cấu hình vùng thực tế}
+\addcontentsline{toc}{section}{5. Bản đồ ngữ nghĩa, quy đổi tọa độ Pixel--ROS và cấu hình vùng thực tế}
+
+\subsection*{5.1. Thông số bản đồ Occupancy Grid gốc (\texttt{maps/map.yaml})}
+\addcontentsline{toc}{subsection}{5.1. Thông số bản đồ Occupancy Grid gốc (\texttt{maps/map.yaml})}
+
+Bản đồ lưới chiếm chỗ sử dụng trong dự án được lưu tại \path{maps/map.yaml} và \path{maps/map.pgm}. Kiểm tra trực tiếp file ảnh \path{maps/map.pgm} cho thấy đây là ảnh xám 8-bit định dạng Netpbm (\texttt{rawbits, greymap}) có kích thước chiều rộng $W = 788\,\text{px}$ và chiều cao $H = 1101\,\text{px}$. Nội dung cấu hình trong \path{maps/map.yaml} như sau:
+
+\begin{svcode}
+image: map.pgm
+mode: trinary
+resolution: 0.05
+origin:
+- -19.7
+- -27.5
+- 0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.25
+\end{svcode}
+
+Trong hàm \texttt{load\_occupancy\_map} (\path{tb4_voice_control/map_model.py}), với \texttt{mode: trinary} và \texttt{negate: 0}, xác suất chiếm chỗ $p(u, v)$ của mỗi điểm ảnh có mức xám $I(u, v) \in \{0, 1, \dots, 255\}$ được tính bằng công thức:
+\begin{equation}
+  p(u, v) = \frac{255 - I(u, v)}{255.0}
+\end{equation}
+Từ đó, bản đồ được tách thành ba mặt nạ lô-gic rời nhau và khóa ghi (\texttt{write=False}):
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Ô tự do (\texttt{free\_mask}):} $p(u, v) < \text{free\_thresh} = 0.25$ (các điểm ảnh sáng màu mà robot được phép đặt đích điều hướng);
+  \item \textbf{Ô vật cản (\texttt{occupied\_mask}):} $p(u, v) > \text{occupied\_thresh} = 0.65$ (tường, kệ hàng và chướng ngại vật cố định);
+  \item \textbf{Ô chưa xác định (\texttt{unknown\_mask}):} $0.25 \le p(u, v) \le 0.65$ (khu vực ngoài biên quét LiDAR).
+\end{itemize}
+
+\reportfigure[Hiển thị bản đồ Occupancy Grid gốc maps/map.pgm (788 x 1101 px) và thông số maps/map.yaml trong trình xem ảnh hoặc RViz2/Map Editor trước khi bật lớp phủ phân vùng]{01_original_occupancy_map.png}{Bản đồ Occupancy Grid gốc (\texttt{maps/map.pgm} và \texttt{maps/map.yaml}) trước khi phân vùng ngữ nghĩa}
+
+\subsection*{5.2. Quan hệ biến đổi tọa độ giữa ảnh Pixel và hệ quy chiếu ROS \texttt{map}}
+\addcontentsline{toc}{subsection}{5.2. Quan hệ biến đổi tọa độ giữa ảnh Pixel và hệ quy chiếu ROS \texttt{map}}
+
+Trong ảnh số kích thước $W \times H$, gốc tọa độ pixel $(0, 0)$ nằm tại tâm điểm ảnh góc trên bên trái, trục $u$ hướng sang phải và trục $v$ hướng xuống dưới. Ngược lại, trong hệ quy chiếu bản đồ của ROS (\texttt{frame\_id: map}), thông số $\text{origin} = (x_0, y_0, \theta_0)$ xác định vị trí và góc quay của góc dưới bên trái bức ảnh trong mặt phẳng mét, với trục $X$ hướng sang phải và trục $Y$ hướng lên trên.
+
+Để tránh sai lệch nửa ô lưới khi chuyển đổi giữa tâm điểm ảnh và tọa độ liên tục, mô-đun \path{tb4_voice_control/map_model.py} cài đặt hai hàm biến đổi chính xác tại tâm ô lưới (\textit{cell-center coordinates}):
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Chuyển từ tọa độ Pixel $(u, v)$ sang tọa độ ROS $(x, y)$ (\texttt{pixel\_to\_ros}):}
+  Với độ phân giải $r = \text{resolution}$ ($\text{m/px}$) và chiều cao ảnh $H = \text{image\_height}$, tọa độ cục bộ tính từ góc dưới bên trái của ảnh đến tâm ô $(u, v)$ là:
+  \begin{equation}
+    x_{\text{local}} = (u + 0.5) \cdot r, \qquad y_{\text{local}} = (H - v - 0.5) \cdot r
+  \end{equation}
+  Áp dụng phép quay góc $\theta_0$ và phép tịnh tiến theo gốc $(x_0, y_0)$:
+  \begin{equation}
+    \begin{bmatrix} x \\ y \end{bmatrix} =
+    \begin{bmatrix} x_0 \\ y_0 \end{bmatrix} +
+    \begin{bmatrix} \cos\theta_0 & -\sin\theta_0 \\ \sin\theta_0 & \cos\theta_0 \end{bmatrix}
+    \begin{bmatrix} x_{\text{local}} \\ y_{\text{local}} \end{bmatrix}
+  \end{equation}
+
+  \item \textbf{Chuyển ngược từ tọa độ ROS $(x, y)$ sang tọa độ Pixel $(u, v)$ (\texttt{ros\_to\_pixel}):}
+  Đặt $\Delta x = x - x_0$ và $\Delta y = y - y_0$, khử góc quay $\theta_0$ để thu lại tọa độ cục bộ:
+  \begin{equation}
+    \begin{bmatrix} x_{\text{local}} \\ y_{\text{local}} \end{bmatrix} =
+    \begin{bmatrix} \cos\theta_0 & \sin\theta_0 \\ -\sin\theta_0 & \cos\theta_0 \end{bmatrix}
+    \begin{bmatrix} \Delta x \\ \Delta y \end{bmatrix}
+  \end{equation}
+  Suy ra tọa độ tâm điểm ảnh tương ứng:
+  \begin{equation}
+    u = \frac{x_{\text{local}}}{r} - 0.5, \qquad v = H - \frac{y_{\text{local}}}{r} - 0.5
+  \end{equation}
+\end{enumerate}
+
+Thay số cụ thể từ \path{maps/map.yaml} ($r = 0.05\,\text{m/px}$, $x_0 = -19.7\,\text{m}$, $y_0 = -27.5\,\text{m}$, $\theta_0 = 0\,\text{rad}$) và chiều cao ảnh $H = 1101\,\text{px}$, công thức rút gọn trực tiếp trên bản đồ của bài thực hành là:
+\begin{equation}
+  x = -19.7 + 0.05(u + 0.5), \qquad y = -27.5 + 0.05(1100.5 - v)
+\end{equation}
+
+\subsection*{5.3. Bảng cấu hình ba vùng ngữ nghĩa thực tế trong \texttt{config/regions.yaml}}
+\addcontentsline{toc}{subsection}{5.3. Bảng cấu hình ba vùng ngữ nghĩa thực tế trong \texttt{config/regions.yaml}}
+
+File \path{config/regions.yaml} định nghĩa 3 vùng ngữ nghĩa hợp lệ trên bản đồ \path{../maps/map.yaml} trong hệ quy chiếu \texttt{map}. Toàn bộ thông số ID, tên hiển thị, danh sách từ đồng nghĩa (aliases), màu sắc RGB, danh sách đỉnh đa giác pixel và tọa độ đích điều hướng $(x, y, \text{yaw})$ được trích xuất chính xác từ repository trong bảng dưới đây:
+
+\begin{longtable}{|p{0.11\textwidth}|p{0.15\textwidth}|p{0.21\textwidth}|p{0.21\textwidth}|p{0.20\textwidth}|}
+\hline
+\textbf{ID vùng} & \textbf{Tên vùng \& Màu RGB} & \textbf{Danh sách Aliases} & \textbf{Đỉnh đa giác Pixel $(u, v)$} & \textbf{Goal Pose trong frame \texttt{map}} \\
+\hline
+\endfirsthead
+\hline
+\textbf{ID vùng} & \textbf{Tên vùng \& Màu RGB} & \textbf{Danh sách Aliases} & \textbf{Đỉnh đa giác Pixel $(u, v)$} & \textbf{Goal Pose trong frame \texttt{map}} \\
+\hline
+\endhead
+\texttt{zone\_a} & Khu vực A \newline \texttt{[66, 135, 245]} (Xanh dương) & \texttt{A}, \texttt{khu A}, \texttt{khu vực A} & $(185, 530)$, $(380, 530)$, $(380, 580)$, $(185, 620)$ & $x = -3.3831\,\text{m}$ \newline $y = -0.4085\,\text{m}$ \newline $\text{yaw} = -0.3140\,\text{rad}$ \\
+\hline
+\texttt{zone\_b} & Khu vực B \newline \texttt{[52, 168, 83]} (Xanh lá) & \texttt{B}, \texttt{khu B}, \texttt{khu vực B}, \texttt{phòng thí nghiệm} & $(430, 440)$, $(600, 440)$, $(620, 555)$, $(430, 555)$ & $x = 2.3467\,\text{m}$ \newline $y = 2.3598\,\text{m}$ \newline $\text{yaw} = 0.4394\,\text{rad}$ \\
+\hline
+\texttt{zone\_c} & Khu vực C \newline \texttt{[251, 188, 5]} (Vàng cam) & \texttt{C}, \texttt{khu C}, \texttt{khu vực C} & $(295, 445)$, $(425, 445)$, $(425, 520)$, $(295, 520)$ & $x = 1.0492\,\text{m}$ \newline $y = 2.4591\,\text{m}$ \newline $\text{yaw} = -1.2562\,\text{rad}$ \\
+\hline
+\end{longtable}
+
+Giá trị đầy đủ độ chính xác dấu phẩy động của ba goal trong \path{config/regions.yaml} (đồng bộ với \path{config/goals.yaml}) lần lượt là:
+\begin{itemize}[leftmargin=1.2cm]
+  \item \texttt{zone\_a} (\texttt{goal\_1}): $x = -3.38309231340713$, $y = -0.40846482798119327$, $\text{yaw} = -0.31400902728329283\,\text{rad}$;
+  \item \texttt{zone\_b} (\texttt{goal\_2}): $x = 2.346728433599496$, $y = 2.3597883289175723$, $\text{yaw} = 0.4394419959454349\,\text{rad}$;
+  \item \texttt{zone\_c} (\texttt{goal\_3}): $x = 1.0492361131784176$, $y = 2.4590821102823286$, $\text{yaw} = -1.2561602671701986\,\text{rad}$.
+\end{itemize}
+
+Đáng chú ý, vùng \texttt{zone\_b} (\textit{Khu vực B}) được khai báo thêm alias ngữ nghĩa chức năng \textbf{``phòng thí nghiệm''}. Khi người dùng ra lệnh \textit{``Đi đến phòng thí nghiệm''}, hệ thống tra cứu alias đã chuẩn hóa (\texttt{phong thi nghiem}) và ánh xạ chính xác tới đích của \texttt{zone\_b}.
+
+Ảnh \path{artifacts/segmented_map.png} dưới đây là sản phẩm thực tế đã được tạo và kiểm chứng từ \path{config/regions.yaml} bằng công cụ \texttt{render\_segmented\_map}:
+
+\reportfigure[Ảnh đã được kết xuất tự động từ \texttt{config/regions.yaml} và lưu tại \texttt{images/segmented\_map.png}]{segmented_map.png}{Bản đồ phân vùng ngữ nghĩa đã xác minh (\texttt{artifacts/segmented\_map.png}) thể hiện 3 vùng \texttt{Khu vực A}, \texttt{Khu vực B}, \texttt{Khu vực C} và hướng goal}
+
+\reportfigure[Giao diện Map Editor sau khi chỉnh sửa một đỉnh/goal, lưu, đóng và mở lại config/regions.yaml, hiển thị 3 vùng, bảng thuộc tính và danh sách Validation trống]{02_map_editor_ui.png}{Giao diện Map Editor (\texttt{ros2 run tb4\_voice\_control map\_editor config/regions.yaml}) khi chỉnh sửa và kiểm tra 3 vùng ngữ nghĩa}

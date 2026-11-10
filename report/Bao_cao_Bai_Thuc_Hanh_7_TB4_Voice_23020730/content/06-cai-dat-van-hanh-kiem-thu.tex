@@ -1,0 +1,130 @@
+\section*{8. Quy trình cài đặt, biên dịch, chỉnh sửa bản đồ và vận hành hệ thống}
+\addcontentsline{toc}{section}{8. Quy trình cài đặt, biên dịch, chỉnh sửa bản đồ và vận hành hệ thống}
+
+Toàn bộ câu lệnh vận hành dưới đây được đối chiếu trực tiếp với \path{README.md}, \path{setup.py}, \path{launch/voice_navigation.launch.py}, \path{scripts/setup_speech_venv.sh} và \path{scripts/run_voice_control.sh} trong repository hiện tại.
+
+\subsection*{8.1. Kiểm tra điều kiện tiên quyết của môi trường}
+\addcontentsline{toc}{subsection}{8.1. Kiểm tra điều kiện tiên quyết của môi trường}
+
+Trước khi biên dịch hoặc chạy demo, nạp môi trường ROS~2 Humble và kiểm tra sự hiện diện của thiết bị thu âm cùng các gói mô phỏng/điều hướng nền tảng:
+
+\begin{svcode}
+source /opt/ros/humble/setup.bash
+arecord -l
+ros2 pkg prefix turtlebot4_ignition_bringup
+ros2 pkg prefix nav2_bringup
+\end{svcode}
+
+Mọi cửa sổ terminal tham gia vào cùng phiên chạy phải sử dụng thống nhất giá trị \texttt{ROS\_DOMAIN\_ID} và \texttt{RMW\_IMPLEMENTATION}.
+
+\subsection*{8.2. Biên dịch gói \texttt{tb4\_voice\_control} và chạy bộ kiểm thử tự động}
+\addcontentsline{toc}{subsection}{8.2. Biên dịch gói \texttt{tb4\_voice\_control} và chạy bộ kiểm thử tự động}
+
+Tại thư mục gốc của repository, thực hiện kiểm thử nhanh bằng \texttt{pytest}, biên dịch gói bằng \texttt{colcon build} với cờ \texttt{--symlink-install}, sau đó chạy toàn bộ kiểm thử gói qua \texttt{colcon test}:
+
+\begin{svcode}
+source /opt/ros/humble/setup.bash
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+export QT_QPA_PLATFORM=offscreen  # chỉ dùng khi chạy kiểm thử Qt tự động không màn hình
+pytest -q
+colcon build --base-paths . --packages-select tb4_voice_control --symlink-install
+colcon test --base-paths . --packages-select tb4_voice_control \
+  --event-handlers console_direct+
+colcon test-result --verbose
+source install/setup.bash
+\end{svcode}
+
+Lưu ý: Biến môi trường \texttt{QT\_QPA\_PLATFORM=offscreen} chỉ dùng cho kiểm thử tự động không cần màn hình hiển thị; khi mở giao diện \texttt{map\_editor} hoặc \texttt{voice\_control} thực tế trên màn hình desktop, cần bỏ biến này (\texttt{unset QT\_QPA\_PLATFORM}) và đảm bảo biến \texttt{DISPLAY} hợp lệ.
+
+\subsection*{8.3. Mở Map Editor, chọn lại vùng/đích và xuất ảnh bản đồ phân vùng}
+\addcontentsline{toc}{subsection}{8.3. Mở Map Editor, chọn lại vùng/đích và xuất ảnh bản đồ phân vùng}
+
+Sau khi đã \texttt{source install/setup.bash}, người vận hành có thể mở giao diện Map Editor từ file cấu hình vùng hiện có hoặc mở trực tiếp từ file bản đồ gốc để tạo cấu hình mới:
+
+\begin{svcode}
+# Mở cấu hình 3 vùng hiện có để xem hoặc chỉnh sửa:
+ros2 run tb4_voice_control map_editor config/regions.yaml
+
+# Hoặc mở trực tiếp từ bản đồ gốc để vẽ phân vùng mới:
+ros2 run tb4_voice_control map_editor maps/map.yaml
+\end{svcode}
+
+Quy trình chỉnh sửa hoặc chọn lại vùng ngữ nghĩa trong \texttt{map\_editor}:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item Chọn công cụ \textbf{Draw polygon} trên thanh công cụ để vẽ vùng mới (nhấp chuột trái đặt từng đỉnh, nhấn \texttt{Enter} để khép đa giác), hoặc chọn \textbf{Select} để kéo các đỉnh tròn trắng của vùng đã có (\texttt{zone\_a}, \texttt{zone\_b}, \texttt{zone\_c}).
+  \item Chọn công cụ \textbf{Place goal / yaw}, nhấp chuột vào một ô tự do (màu sáng) bên trong đa giác để đặt vị trí đích $(x, y)$ và kéo chuột theo hướng đỗ mong muốn để đặt góc \texttt{yaw}.
+  \item Điền hoặc cập nhật \texttt{ID}, \texttt{Name}, \texttt{Aliases} (ví dụ \texttt{B, khu B, khu vực B, phòng thí nghiệm}) và \texttt{RGB color} ở khung thuộc tính bên phải, nhấn \textbf{Apply properties}.
+  \item Kiểm tra khung \textbf{Validation} trống hoàn toàn, sau đó nhấn \textbf{Save} (\texttt{Ctrl+S}) để ghi nguyên tử vào \path{config/regions.yaml}.
+\end{enumerate}
+
+Để kiểm tra độc lập file \path{config/regions.yaml} và xuất lại ảnh bản đồ phân vùng từ dòng lệnh:
+
+\begin{svcode}
+ros2 run tb4_voice_control validate_regions config/regions.yaml
+ros2 run tb4_voice_control render_segmented_map \
+  config/regions.yaml artifacts/segmented_map.png
+\end{svcode}
+
+Ngoài ra, gói còn cung cấp hai tiện ích dòng lệnh hỗ trợ thu thập pose thực từ \texttt{/amcl\_pose} và kiểm tra điều hướng tuần tự với \path{config/goals.yaml}:
+
+\begin{svcode}
+ros2 run tb4_voice_control record_goal --name goal_1 --output config/goals.yaml
+ros2 run tb4_voice_control navigate_goals --goals-file config/goals.yaml
+\end{svcode}
+
+\subsection*{8.4. Thiết lập môi trường \texttt{.venv-speech} và kiểm thử SDK Gemini}
+\addcontentsline{toc}{subsection}{8.4. Thiết lập môi trường \texttt{.venv-speech} và kiểm thử SDK Gemini}
+
+Khởi tạo môi trường ảo dành riêng cho thu âm và Gemini API bằng kịch bản:
+
+\begin{svcode}
+./scripts/setup_speech_venv.sh
+\end{svcode}
+
+Kịch bản tạo \path{.venv-speech}, cài đặt các gói trong \path{requirements-speech.txt} và in kết quả kiểm tra phiên bản \texttt{google-genai}, \texttt{numpy}, \texttt{sounddevice}, trạng thái có/không có \texttt{GEMINI\_API\_KEY} cùng tên thiết bị micro đầu vào mặc định.
+
+Để chạy bộ 11 bài kiểm thử chấp nhận hợp đồng SDK \texttt{google-genai} 2.33.x hoàn toàn ngoại tuyến (sử dụng khóa giả lập và \texttt{httpx.MockTransport}, không phát sinh cước phí mạng):
+
+\begin{svcode}
+PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
+  .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk
+\end{svcode}
+
+Khi chạy thực tế với dịch vụ Google Gemini, xuất khóa API có giới hạn quyền chỉ trong phiên shell hiện tại và khởi chạy giao diện qua kịch bản wrapper:
+
+\begin{svcode}
+export GEMINI_API_KEY='YOUR_RESTRICTED_KEY'
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+./scripts/run_voice_control.sh --help
+./scripts/run_voice_control.sh
+\end{svcode}
+
+\subsection*{8.5. Khởi chạy mô phỏng TurtleBot 4, Nav2 và Voice Control UI}
+\addcontentsline{toc}{subsection}{8.5. Khởi chạy mô phỏng TurtleBot 4, Nav2 và Voice Control UI}
+
+File launch tích hợp \path{launch/voice_navigation.launch.py} cung cấp ba chế độ khởi chạy linh hoạt thông qua các tham số \texttt{start\_nav2}, \texttt{start\_voice\_ui}, \texttt{use\_sim\_time}, \texttt{world}, \texttt{map}, \texttt{rviz}, \texttt{regions\_file} và \texttt{voice\_config}:
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Khởi chạy toàn bộ mô phỏng Gazebo, Localization/Nav2 và Voice Control UI bằng một lệnh:}
+\begin{svcode}
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export GEMINI_API_KEY='YOUR_RESTRICTED_KEY'
+ros2 launch tb4_voice_control voice_navigation.launch.py
+\end{svcode}
+
+  \item \textbf{Tái sử dụng phiên mô phỏng/Nav2 đang chạy sẵn ở terminal khác (tránh mở trùng Gazebo/Nav2):}
+\begin{svcode}
+ros2 launch tb4_voice_control voice_navigation.launch.py \
+  start_nav2:=false start_voice_ui:=true use_sim_time:=true
+\end{svcode}
+
+  \item \textbf{Chỉ khởi chạy mô phỏng Gazebo và Nav2 baseline (không mở Voice UI):}
+\begin{svcode}
+ros2 launch tb4_voice_control voice_navigation.launch.py \
+  start_nav2:=true start_voice_ui:=false
+\end{svcode}
+\end{enumerate}
+
+Sau khi Gazebo và RViz2 mở lên, người vận hành thực hiện tuần tự: (1) đảm bảo mô phỏng Gazebo đang ở trạng thái \textbf{Play}, (2) cho robot rời đế sạc (\textit{undock}) nếu đang nằm trên dock, (3) dùng công cụ \textbf{2D Pose Estimate} trên RViz2 đặt vị trí và hướng khởi tạo của robot khớp với Gazebo để đám mây hạt AMCL hội tụ và xuất bản \texttt{/amcl\_pose}, và (4) xác nhận \texttt{bt\_navigator} đạt trạng thái \texttt{active} trước khi nhấn nút \textbf{Giữ để nói}.

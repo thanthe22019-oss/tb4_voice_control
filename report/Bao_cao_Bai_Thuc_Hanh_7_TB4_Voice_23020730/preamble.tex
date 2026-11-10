@@ -1,0 +1,64 @@
+% Preamble dựa trên mẫu báo cáo LaTeX UET/TurtleBot 4 đã thiết lập
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage[top=2.2cm,bottom=2.2cm,left=2.5cm,right=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{fvextra}
+\usepackage{graphicx}
+\graphicspath{{images/}}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{array,booktabs,multirow,longtable}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{calc,arrows.meta,positioning}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{setspace}
+
+\setstretch{1.15}
+\setlength{\parindent}{1cm}
+\setlength{\parskip}{0.25em}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\urlstyle{same}
+
+\DefineVerbatimEnvironment{svcode}{Verbatim}{
+  breaklines=true,
+  breakanywhere=true,
+  fontsize=\footnotesize,
+  frame=single,
+  rulecolor=\color{black!20},
+  xleftmargin=1em
+}
+
+\newcommand{\pending}{\textit{[CẬP NHẬT SAU KHI CHẠY THỰC TẾ]}}
+
+% Nếu ảnh chưa tồn tại, lệnh tự tạo placeholder đúng kích thước và nêu rõ bằng chứng cần chụp.
+\newcommand{\reportfigure}[3][]{%
+\begin{figure}[H]
+\centering
+\IfFileExists{images/#2}{%
+  \includegraphics[width=0.92\textwidth,height=0.52\textheight,keepaspectratio]{#2}%
+}{%
+  \fbox{\begin{minipage}[c][5.8cm][c]{0.88\textwidth}
+    \centering
+    {\Large\bfseries ẢNH MINH HỌA \pending}\par\vspace{0.3cm}
+    Chụp màn hình và lưu thành:\par
+    \nolinkurl{images/#2}\par\vspace{0.25cm}
+    {\footnotesize\textbf{Bằng chứng cần thể hiện:} #1\par}
+  \end{minipage}}%
+}
+\caption{#3}
+\end{figure}
+}
+
+\providecommand{\univA}{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ}
+\providecommand{\univB}{KHOA ĐIỆN TỬ VIỄN THÔNG}
+\providecommand{\taskVN}{Bài thực hành 7: Phân vùng bản đồ ngữ nghĩa và điều hướng TurtleBot 4 bằng giọng nói tiếng Việt qua Gemini API và Nav2}
+\providecommand{\memberOne}{Thân Thế Trí Dũng}
+\providecommand{\memberOneID}{23020730}
+\providecommand{\studentClass}{QH-2023-I/CQ-E-RE}
+\providecommand{\city}{Hà Nội}
+\providecommand{\yeartext}{2026}

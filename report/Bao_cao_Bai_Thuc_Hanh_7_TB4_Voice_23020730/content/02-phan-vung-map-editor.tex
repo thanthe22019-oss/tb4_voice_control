@@ -1,0 +1,78 @@
+\section*{3. Cơ sở thiết kế phân vùng bản đồ thủ công và bán tự động}
+\addcontentsline{toc}{section}{3. Cơ sở thiết kế phân vùng bản đồ thủ công và bán tự động}
+
+\subsection*{3.1. Phân tích đặc điểm môi trường và lý do lựa chọn phân vùng bằng đa giác}
+\addcontentsline{toc}{subsection}{3.1. Phân tích đặc điểm môi trường và lý do lựa chọn phân vùng bằng đa giác}
+
+Trong các bài toán điều hướng ngữ nghĩa trong nhà (\textit{indoor semantic navigation}), không gian làm việc của robot thường bao gồm ba dạng cấu trúc hình học khác nhau: (1) các phòng kín có tường bao và cửa ra vào hẹp, (2) các hành lang dài nối liền nhiều khu vực, và (3) các không gian mở (\textit{open spaces}) như nhà kho (\texttt{warehouse}), sảnh lớn hoặc phòng thí nghiệm đa năng nơi các khu vực chức năng chỉ được phân tách bởi kệ hàng, lối đi hoặc quy ước vận hành chứ không có tường ngăn vật lý khép kín.
+
+Nếu chỉ sử dụng các thuật toán phân vùng bản đồ hoàn toàn tự động dựa trên hình thái học (\textit{morphological segmentation}), biến đổi khoảng cách kết hợp Watershed (\textit{distance transform + watershed}) hoặc đồ thị Voronoi trên ảnh Occupancy Grid:
+\begin{itemize}[leftmargin=1.2cm]
+  \item Trong khu vực phòng có cửa hẹp, phép co giãn hình thái học có thể tách được ranh giới tại khung cửa, nhưng ranh giới sinh ra thường bị biến dạng theo nhiễu LiDAR hoặc các vật cản nội thất sát tường.
+  \item Trong hành lang và đặc biệt là không gian mở như bản đồ \texttt{warehouse} của TurtleBot~4, khoảng cách giữa các kệ hàng và lối đi thông nhau khiến thuật toán tự động hoặc gộp nhiều khu vực chức năng thành một vùng duy nhất (\textit{under-segmentation}), hoặc chia vụn một khu vực làm việc thành nhiều mảnh nhỏ quanh từng chân kệ (\textit{over-segmentation}).
+  \item Thuật toán tự động không thể tự suy diễn được ý nghĩa vận hành của từng vùng (tên gọi tiếng Việt, các cách gọi đồng nghĩa như \textit{``phòng thí nghiệm''}, hay hướng đỗ \texttt{yaw} mong muốn của robot khi dừng tại đích).
+\end{itemize}
+
+Vì vậy, gói \texttt{tb4\_voice\_control} áp dụng thiết kế \textbf{phân vùng thủ công kết hợp hỗ trợ và kiểm tra bán tự động bằng đa giác đơn (\textit{simple polygons})}:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Linh hoạt cho cả phòng kín, hành lang và không gian mở:} Người thiết kế chủ động xác định ranh giới đa giác theo đúng bố cục vật lý hoặc quy ước khu vực chức năng trên nền Occupancy Grid gốc. Một vùng có thể bao phủ một căn phòng, một nhánh hành lang hoặc một phân khu mở giữa các dãy kệ trong nhà kho.
+  \item \textbf{Hỗ trợ bán tự động trong quá trình tạo vùng và kiểm tra hình học:} Khi người dùng khép kín một đa giác trên giao diện, phần mềm tự động tính trọng tâm hình học thông qua mô-men bậc nhất của đa giác (\texttt{cv2.moments}), tự động quy đổi tọa độ pixel sang tọa độ mét trong hệ quy chiếu \texttt{map} để khởi tạo \texttt{GoalPose} ban đầu, và tự động kiểm tra toàn bộ điều kiện hợp lệ ở độ phân giải gốc của ảnh bản đồ.
+  \item \textbf{Tách biệt hoàn toàn dữ liệu ngữ nghĩa khỏi bản đồ định vị:} Bản đồ Occupancy Grid gốc (\path{maps/map.pgm} và \path{maps/map.yaml}) được mở ở chế độ chỉ đọc (mảng NumPy được khóa \texttt{write=False}). Mọi thông tin đa giác, nhãn, alias và goal được lưu trong \path{config/regions.yaml}. Thiết kế này đảm bảo việc tô màu hay đặt nhãn không bao giờ làm thay đổi giá trị mức xám của bản đồ mà \texttt{map\_server}, \texttt{amcl} và Nav2 costmap sử dụng.
+\end{enumerate}
+
+\section*{4. Quy trình làm việc của Map Editor UI và kiểm tra ràng buộc}
+\addcontentsline{toc}{section}{4. Quy trình làm việc của Map Editor UI và kiểm tra ràng buộc}
+
+\subsection*{4.1. Giao diện và các chế độ thao tác trên MapCanvas}
+\addcontentsline{toc}{subsection}{4.1. Giao diện và các chế độ thao tác trên MapCanvas}
+
+Công cụ chỉnh sửa bản đồ ngữ nghĩa (\texttt{tb4\_voice\_control/map\_editor.py} và \texttt{tb4\_voice\_control/map\_canvas.py}) được xây dựng trên \texttt{QMainWindow} và \texttt{QGraphicsView}. Ảnh bản đồ \texttt{map.pgm} được nạp vào khung cảnh đồ họa sao cho tâm của mỗi ô lưới pixel $(u, v)$ nằm đúng tại tọa độ nguyên $(u, v)$ và biên ngoài của ảnh trải từ $(-0.5, -0.5)$ đến $(W - 0.5, H - 0.5)$. Khi di chuyển chuột trên bản đồ, thanh trạng thái (\texttt{statusBar}) liên tục cập nhật đồng thời tọa độ Pixel $(u, v)$ và tọa độ ROS $(x, y)$ tính bằng mét.
+
+Thanh công cụ của \texttt{MapEditorWindow} cung cấp bốn chế độ tương tác loại trừ lẫn nhau (\texttt{QActionGroup}):
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Select (\texttt{select}):} Nhấp chuột vào một đa giác trên bản đồ hoặc chọn trong danh sách \textit{Regions} ở thanh bên phải để lấy tiêu điểm. Khi một vùng được chọn, các đỉnh của đa giác xuất hiện dưới dạng các nút tròn trắng viền đen (\texttt{\_VertexHandle}) có kích thước hiển thị cố định trên màn hình (\texttt{ItemIgnoresTransformations}). Người dùng có thể kéo thả từng đỉnh để tinh chỉnh hình dạng vùng theo thời gian thực; mỗi thao tác thả chuột tạo ra đúng một lệnh cập nhật trong lịch sử hoàn tác.
+  \item \textbf{Draw polygon (\texttt{draw\_polygon}):} Nhấp chuột trái liên tiếp để đặt các đỉnh đa giác mới, kèm theo đường nét đứt màu xanh lơ (\texttt{cyan}) nối tới vị trí con trỏ. Khi đã có từ 3 đỉnh trở lên, người dùng nhấn phím \texttt{Enter}/\texttt{Return} hoặc nhấp chuột vào vị trí cách đỉnh đầu tiên một khoảng cách Manhattan $\le 8\,\text{px}$ trên màn hình để khép kín đa giác. Phím \texttt{Esc} dùng để hủy thao tác vẽ đang dở dang. Ngay khi đa giác hoàn tất, hệ thống tự sinh mã định danh duy nhất \texttt{region\_N}, tính trọng tâm đa giác bằng \texttt{cv2.moments} (hoặc trung bình cộng các đỉnh nếu diện tích mô-men bằng $0$) và đặt \texttt{GoalPose} mặc định tại trọng tâm đó với góc $\text{yaw} = 0\,\text{rad}$.
+  \item \textbf{Place goal / yaw (\texttt{place\_goal}):} Cho phép đặt lại vị trí đích và hướng đỗ của vùng đang chọn. Vị trí nhấn chuột trái (\texttt{mousePressEvent}) xác định tọa độ đích $(x, y)$ trong frame \texttt{map}; thao tác kéo chuột trước khi thả (\texttt{mouseReleaseEvent}) xác định véc-tơ hướng để tính góc $\text{yaw} = \operatorname{atan2}(y_{\text{end}} - y_{\text{start}}, x_{\text{end}} - x_{\text{start}})$. Nếu chỉ nhấp tại chỗ mà không kéo, góc \texttt{yaw} hiện tại của vùng được giữ nguyên.
+  \item \textbf{Pan (\texttt{pan}) và Thu phóng (\texttt{Zoom +}, \texttt{Zoom -}, \texttt{Fit}):} Cho phép kéo trượt bản đồ (\texttt{ScrollHandDrag}), phóng to/thu nhỏ quanh vị trí con trỏ chuột theo hệ số $1.25\times$ hoặc $0.8\times$ (giới hạn tỷ lệ thu phóng an toàn trong đoạn $[0.05, 100]$) và căn vừa toàn bộ bản đồ vào khung nhìn (\texttt{fitInView}).
+\end{itemize}
+
+Ở thanh bên phải (\textit{Sidebar}), người vận hành có thể bật/tắt hiển thị từng vùng qua hộp kiểm (\textit{checkbox}), chỉnh sửa trực tiếp các trường thuộc tính \texttt{ID}, \texttt{Name}, \texttt{Aliases} (phân tách bằng dấu phẩy) và \texttt{RGB color} (\texttt{0..255}), xóa vùng (\texttt{Delete}) hoặc thực hiện \texttt{Undo}/\texttt{Redo} (\texttt{Ctrl+Z}/\texttt{Ctrl+Shift+Z}) với bộ đệm lịch sử 100 bước trong \texttt{EditorDocument}.
+
+\subsection*{4.2. Các quy tắc kiểm tra hình học và ngữ nghĩa tự động}
+\addcontentsline{toc}{subsection}{4.2. Các quy tắc kiểm tra hình học và ngữ nghĩa tự động}
+
+Mọi thay đổi trên tài liệu đều được kiểm tra tức thời qua hàm \texttt{validate\_semantic\_map} trong \path{tb4_voice_control/region_validation.py}. Các nút \texttt{Save}, \texttt{Save As} và \texttt{Export Image} chỉ được kích hoạt khi danh sách lỗi (\texttt{Validation}) hoàn toàn trống. Khi người dùng nhấp vào một thông báo lỗi trong danh sách \texttt{Validation}, giao diện tự động bật hiển thị vùng bị lỗi, chọn vùng đó và dịch chuyển tâm khung nhìn (\texttt{centerOn}) tới đúng đa giác cần sửa. Bảng dưới đây liệt kê toàn bộ các mã lỗi kiểm tra:
+
+\begin{longtable}{|p{0.27\textwidth}|p{0.63\textwidth}|}
+\hline
+\textbf{Mã kiểm tra (\texttt{code})} & \textbf{Điều kiện ràng buộc và ý nghĩa kỹ thuật} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Mã kiểm tra (\texttt{code})} & \textbf{Điều kiện ràng buộc và ý nghĩa kỹ thuật} \\
+\hline
+\endhead
+\texttt{invalid\_schema} / \texttt{invalid\_property} & Kiểm tra \texttt{schema\_version == 1}, \texttt{map.frame\_id} không rỗng, \texttt{region.id} duy nhất, \texttt{region.name} không rỗng, mỗi alias chứa ít nhất một chữ cái/chữ số sau chuẩn hóa, màu RGB gồm đúng 3 số nguyên trong $[0, 255]$, đa giác có tối thiểu 3 đỉnh hữu hạn và tọa độ \texttt{goal} $(x, y, \text{yaw})$ hữu hạn. \\
+\hline
+\texttt{duplicate\_alias} & Chuẩn hóa mọi alias bằng \texttt{normalize\_alias} (chuyển chữ thường, đổi \texttt{đ} $\rightarrow$ \texttt{d}, tách dấu tổ hợp Unicode NFKD và lọc ký tự chữ--số). Cấm hai alias trong cùng một vùng hoặc giữa hai vùng khác nhau trùng nhau sau chuẩn hóa nhằm đảm bảo bộ phân tích giọng nói không bị nhập nhằng. \\
+\hline
+\texttt{vertex\_out\_of\_bounds} & Mọi đỉnh $(u, v)$ của \texttt{polygon\_pixels} phải thỏa mãn $0 \le u \le W - 1$ và $0 \le v \le H - 1$ trên ảnh kích thước $W \times H$. \\
+\hline
+\texttt{invalid\_polygon} & Các đỉnh trong một vùng không được trùng nhau, diện tích hình học \texttt{cv2.contourArea(contour)} phải dương ($> 0$), và không có bất kỳ cặp cạnh không kề nhau nào cắt nhau, chạm đỉnh hoặc trùng nhau cộng tuyến (\texttt{\_segments\_intersect}). \\
+\hline
+\texttt{goal\_out\_of\_bounds} & Tọa độ pixel $(u_g, v_g)$ quy đổi từ \texttt{region.goal} qua \texttt{ros\_to\_pixel} phải nằm trong phạm vi ảnh $[-0.5, W - 0.5) \times [-0.5, H - 0.5)$. \\
+\hline
+\texttt{goal\_not\_free} & Ô lưới gần nhất $(\lfloor u_g + 0.5 \rfloor, \lfloor v_g + 0.5 \rfloor)$ phải thuộc vùng không gian tự do (\texttt{occupancy.free\_mask[y, x] == True}); từ chối goal đặt trên tường/vật cản (\texttt{occupied}) hoặc vùng chưa khảo sát (\texttt{unknown}). \\
+\hline
+\texttt{goal\_outside\_polygon} & Điểm đích $(u_g, v_g)$ phải nằm bên trong hoặc trên biên của đa giác vùng tương ứng (\texttt{cv2.pointPolygonTest(contour, goal\_pixel, False) >= 0}). \\
+\hline
+\texttt{overlapping\_regions} & Mỗi đa giác hợp lệ được điền đặc vào mặt nạ nhị phân kích thước $H \times W$ rồi thực hiện phép co hình thái học (\texttt{cv2.erode}) với nhân $3 \times 3$. Phần bên trong sau khi co của hai vùng bất kỳ không được giao nhau (\texttt{np.any(interior \& other)}), cho phép hai vùng kề sát biên nhưng cấm chồng lấn diện tích bên trong. \\
+\hline
+\end{longtable}
+
+\subsection*{4.3. Lưu trữ nguyên tử và kết xuất ảnh bản đồ phân vùng}
+\addcontentsline{toc}{subsection}{4.3. Lưu trữ nguyên tử và kết xuất ảnh bản đồ phân vùng}
+
+Khi lưu cấu hình vùng, hàm \texttt{save\_regions} trong \path{tb4_voice_control/regions.py} ghi toàn bộ dữ liệu UTF-8 YAML vào một file tạm ẩn cùng thư mục (\texttt{.<tên\_file>.<ngẫu\_nhiên>.tmp}), thực hiện \texttt{flush()} và \texttt{os.fsync()} xuống đĩa rồi mới thay thế nguyên tử đích đến bằng \texttt{os.replace()}. Cơ chế này đảm bảo file \path{config/regions.yaml} không bao giờ bị hỏng hoặc ghi dở dang nếu quá trình lưu gặp sự cố; đồng thời hàm từ chối ghi đè lên \path{maps/map.yaml} hoặc \path{maps/map.pgm}.
+
+Quá trình xuất ảnh minh chứng (\texttt{render\_segmented\_map} trong \path{tb4_voice_control/map_render.py}) chuyển ảnh xám \texttt{map.pgm} sang không gian màu RGB, pha trộn màu của từng vùng với hệ số trong suốt $35\%$ (\texttt{cv2.addWeighted(result, 0.65, tint, 0.35, 0)}), vẽ đường viền đa giác dày $1\,\text{px}$, dùng thư viện Pillow cùng phông chữ Unicode đóng gói sẵn \path{tb4_voice_control/assets/DejaVuSans.ttf} để in tên tiếng Việt có viền trắng tại trọng tâm mỗi vùng, và vẽ mũi tên chỉ hướng goal dài $16\,\text{px}$ từ vị trí đích theo góc $\text{yaw} - \theta_0$.

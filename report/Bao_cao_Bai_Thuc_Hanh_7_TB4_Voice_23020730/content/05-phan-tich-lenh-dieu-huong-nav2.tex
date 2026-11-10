@@ -1,0 +1,114 @@
+\section*{7. Phân tích câu lệnh, lập lộ trình đa chặng, hủy lệnh và thực thi Nav2}
+\addcontentsline{toc}{section}{7. Phân tích câu lệnh, lập lộ trình đa chặng, hủy lệnh và thực thi Nav2}
+
+\subsection*{7.1. Chuẩn hóa tiếng Việt và phân tích cú pháp câu lệnh (\texttt{command\_parser.py})}
+\addcontentsline{toc}{subsection}{7.1. Chuẩn hóa tiếng Việt và phân tích cú pháp câu lệnh (\texttt{command\_parser.py})}
+
+Văn bản đầu vào (từ kết quả nhận dạng của \texttt{GeminiTranscriber} hoặc từ ô nhập văn bản chẩn đoán trên giao diện) được xử lý hoàn toàn giống nhau qua hàm \texttt{parse\_command(text, semantic\_map)} trong \path{tb4_voice_control/command_parser.py}. Để đảm bảo tính tất định (\textit{deterministic}) và miễn nhiễm với sự khác biệt về chữ hoa/thường, dấu câu hoặc cách bỏ dấu tiếng Việt, cả danh sách alias trong \path{config/regions.yaml} lẫn câu lệnh đầu vào đều được chuẩn hóa qua hàm \texttt{normalize\_alias}:
+\begin{enumerate}[leftmargin=1.2cm]
+  \item Chuyển toàn bộ chuỗi về chữ thường (\texttt{casefold()}) và thay chữ \texttt{đ} thành \texttt{d};
+  \item Phân rã Unicode theo dạng chuẩn \texttt{NFKD} và loại bỏ toàn bộ các ký tự dấu kết hợp (\texttt{unicodedata.combining});
+  \item Thay mọi ký tự không phải chữ cái hoặc chữ số bằng khoảng trắng và rút gọn các khoảng trắng liên tiếp thành một dấu cách duy nhất.
+\end{enumerate}
+
+Sau khi tách từ (\texttt{tokens}), bộ phân tích kiểm tra cấu trúc ngữ pháp của hai ý định điều hướng (\texttt{Intent}):
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Tiền tố động từ bắt buộc:} Câu lệnh phải bắt đầu bằng \texttt{di} hoặc \texttt{di chuyen}; nếu không, hàm lập tức ném lỗi \texttt{CommandError('invalid\_command', 'Unsupported navigation command')}.
+  \item \textbf{Dạng lệnh đơn đích \texttt{GO\_TO}:} Sau tiền tố động từ là giới từ chỉ hướng \texttt{den} hoặc \texttt{toi}, tiếp theo là cụm từ chỉ vùng đích:
+  \begin{center}
+    \texttt{di [chuyen] (den | toi) <đích>} $\longrightarrow$ \texttt{VoiceCommand(Intent.GO\_TO, None, destination\_id)}
+  \end{center}
+  Ví dụ:
+  \begin{itemize}
+    \item \textit{``Đi đến khu vực A.''} $\rightarrow$ chuẩn hóa thành \texttt{di den khu vuc a} $\rightarrow$ khớp alias \texttt{khu vuc a} $\rightarrow$ \texttt{VoiceCommand(Intent.GO\_TO, None, 'zone\_a')}.
+    \item \textit{``Đi đến phòng thí nghiệm.''} $\rightarrow$ chuẩn hóa thành \texttt{di den phong thi nghiem} $\rightarrow$ khớp alias \texttt{phong thi nghiem} $\rightarrow$ \texttt{VoiceCommand(Intent.GO\_TO, None, 'zone\_b')}.
+  \end{itemize}
+  \item \textbf{Dạng lệnh hai vùng \texttt{FROM\_TO}:} Sau tiền tố động từ là từ khóa \texttt{tu}, cụm tên vùng xuất phát, giới từ phân tách \texttt{den} hoặc \texttt{toi}, và cụm tên vùng đích:
+  \begin{center}
+    \texttt{di [chuyen] tu <nguồn> (den | toi) <đích>} $\longrightarrow$ \texttt{VoiceCommand(Intent.FROM\_TO, source\_id, destination\_id)}
+  \end{center}
+  Ví dụ: \textit{``Di chuyển từ khu vực A đến khu vực B.''} $\rightarrow$ chuẩn hóa thành \texttt{di chuyen tu khu vuc a den khu vuc b} $\rightarrow$ \texttt{VoiceCommand(Intent.FROM\_TO, 'zone\_a', 'zone\_b')}.
+\end{itemize}
+
+\subsection*{7.2. Giải quyết alias dài nhất và cơ chế từ chối vùng không tồn tại / câu lệnh mơ hồ}
+\addcontentsline{toc}{subsection}{7.2. Giải quyết alias dài nhất và cơ chế từ chối vùng không tồn tại / câu lệnh mơ hồ}
+
+Khác với phương pháp tìm chuỗi con (\textit{substring matching}) dễ bắt nhầm chữ cái đơn lẻ (chẳng hạn chữ \texttt{a} trong một từ không liên quan bị hiểu nhầm thành vùng \texttt{A}), hàm \texttt{\_resolve\_destination} và \texttt{\_parse\_from\_to} bắt buộc \textbf{toàn bộ cụm từ chỉ vùng phải được phủ kín bởi các alias hợp lệ theo thứ tự ưu tiên độ dài từ lớn đến nhỏ}:
+\begin{itemize}[leftmargin=1.2cm]
+  \item Tại mỗi vị trí từ trong cụm đích, thuật toán tìm tất cả alias trong chỉ mục khớp chính xác theo ranh giới từ và ưu tiên alias có số lượng từ nhiều nhất (\texttt{len(key.split())}).
+  \item Nếu xuất hiện từ nối (\texttt{va}, \texttt{hoac}, \texttt{den}, \texttt{toi}) kèm theo vùng thứ hai trong phần đích (ví dụ \textit{``Đi đến khu vực A và khu vực B''}), thuật toán ghi nhận nhiều hơn một vùng đích và từ chối bằng mã lỗi \texttt{ambiguous\_destination}.
+  \item Trong câu lệnh \texttt{FROM\_TO}, thuật toán duyệt mọi vị trí của từ khóa \texttt{den}/\texttt{toi}. Một cách tách chỉ được chấp nhận khi phần trước khớp trọn vẹn một alias nguồn và phần sau phân giải được thành đúng một vùng đích. Nếu tồn tại nhiều hơn một cách tách hợp lệ, câu lệnh bị từ chối với mã \texttt{ambiguous\_command}.
+  \item Nếu bất kỳ phần nào của cụm nguồn hoặc đích không khớp với danh mục alias trong \path{config/regions.yaml} (ví dụ \textit{``Đi đến khu vực Z''} hoặc \textit{``Đi đến phòng họp''}), bộ phân tích ném lỗi \texttt{CommandError('unknown\_region', ...)} ngay lập tức.
+\end{itemize}
+
+Bảng dưới đây liệt kê toàn bộ các mã lỗi của bộ phân tích câu lệnh và bộ điều phối:
+
+\begin{longtable}{|p{0.28\textwidth}|p{0.62\textwidth}|}
+\hline
+\textbf{Mã lỗi (\texttt{code})} & \textbf{Nguyên nhân kích hoạt và hành vi an toàn} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Mã lỗi (\texttt{code})} & \textbf{Nguyên nhân kích hoạt và hành vi an toàn} \\
+\hline
+\endhead
+\texttt{empty\_transcript} & Chuỗi văn bản sau khi cắt khoảng trắng bị rỗng (\texttt{""}). Hệ thống báo \textit{``Không nhận được nội dung câu lệnh.''} và không gửi goal. \\
+\hline
+\texttt{invalid\_command} & Câu lệnh không bắt đầu bằng \texttt{di}/\texttt{di chuyen} hoặc thiếu giới từ \texttt{den}/\texttt{toi}/\texttt{tu} đúng quy phạm. \\
+\hline
+\texttt{missing\_destination} & Có giới từ chỉ hướng hoặc từ nối nhưng thiếu tên vùng đích ở phía sau. \\
+\hline
+\texttt{unknown\_region} & Tên vùng nguồn hoặc vùng đích không tồn tại trong \texttt{config/regions.yaml}. Giao diện hiển thị lỗi kèm danh sách tên vùng hợp lệ (\texttt{Khu vực A, Khu vực B, Khu vực C}) và tuyệt đối không gửi goal tới Nav2. \\
+\hline
+\texttt{ambiguous\_destination} & Cụm đích chứa nhiều hơn một vùng đích (ví dụ nối bằng \texttt{và}/\texttt{hoặc}). \\
+\hline
+\texttt{ambiguous\_command} & Câu lệnh \texttt{FROM\_TO} có nhiều hơn một cách phân tách nguồn--đích hợp lệ. \\
+\hline
+\texttt{duplicate\_alias} & Phát hiện hai vùng có alias trùng nhau khi xây dựng chỉ mục tra cứu. \\
+\hline
+\end{longtable}
+
+\subsection*{7.3. Quy tắc lập lộ trình đa chặng (\texttt{route\_planner.py})}
+\addcontentsline{toc}{subsection}{7.3. Quy tắc lập lộ trình đa chặng (\texttt{route\_planner.py})}
+
+Sau khi phân tích câu lệnh thành công, \texttt{RuntimeController} đọc vị trí hiện tại của robot từ topic \texttt{/amcl\_pose}. Nếu chưa nhận được dữ liệu định vị, hệ thống dừng xử lý và báo mã lỗi \texttt{localization\_error} (\textit{``Chưa nhận được /amcl\_pose; đặt vị trí ban đầu trong RViz và thử lại.''}).
+
+Khi có tọa độ $(x_r, y_r)$ trong frame \texttt{map}, hàm \texttt{find\_current\_region(point\_ros, semantic\_map, occupancy)} trong \path{tb4_voice_control/route_planner.py} chuyển $(x_r, y_r)$ sang tọa độ pixel $(u_r, v_r)$ qua \texttt{ros\_to\_pixel} và tính khoảng cách có dấu tới biên của từng đa giác vùng bằng \texttt{cv2.pointPolygonTest(contour, pixel, True)}. Robot chỉ được coi là đang nằm trong một vùng khi khoảng cách tới biên thỏa mãn nghiêm ngặt $> 10^{-7}\,\text{px}$ (điểm nằm đúng trên cạnh đa giác không thuộc vùng nào) và chỉ thuộc duy nhất một vùng.
+
+Từ vùng hiện tại \texttt{current\_region\_id}, hàm \texttt{plan\_route(command, current\_region\_id)} xác định danh sách các chặng điều hướng cần thực thi:
+
+\begin{longtable}{|p{0.18\textwidth}|p{0.34\textwidth}|p{0.20\textwidth}|p{0.18\textwidth}|}
+\hline
+\textbf{Intent} & \textbf{Vị trí hiện tại của robot (\texttt{current\_region\_id})} & \textbf{Hàng đợi lộ trình trả về} & \textbf{Số chặng Nav2 gửi đi} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Intent} & \textbf{Vị trí hiện tại của robot (\texttt{current\_region\_id})} & \textbf{Hàng đợi lộ trình trả về} & \textbf{Số chặng Nav2 gửi đi} \\
+\hline
+\endhead
+\texttt{GO\_TO(D)} & Đang ở ngoài vùng $D$ ($\neq D$ hoặc \texttt{None}) & \texttt{(D,)} & 1 chặng ($D$) \\
+\hline
+\texttt{GO\_TO(D)} & Đã ở bên trong vùng $D$ ($== D$) & \texttt{()} (rỗng) & 0 chặng (báo \texttt{SUCCEEDED} ngay) \\
+\hline
+\texttt{FROM\_TO(S, D)} & Đang ở ngoài vùng nguồn $S$ ($\neq S$ hoặc \texttt{None}) & \texttt{(S, D)} & 2 chặng ($S \rightarrow D$) \\
+\hline
+\texttt{FROM\_TO(S, D)} & Đã ở bên trong vùng nguồn $S$ ($== S$) & \texttt{(D,)} & 1 chặng (đi thẳng tới $D$) \\
+\hline
+\end{longtable}
+
+Quy tắc trên giải quyết trọn vẹn yêu cầu điều hướng ngữ nghĩa đa chặng: khi người vận hành nói \textit{``Di chuyển từ khu vực A đến khu vực B''}, nếu robot đang đứng ở ngoài \texttt{Khu vực A} thì hệ thống tự động lập lộ trình 2 chặng (\texttt{zone\_a} rồi đến \texttt{zone\_b}); ngược lại, nếu robot đã nằm trong đa giác \texttt{Khu vực A} thì hệ thống bỏ qua chặng thừa và chỉ gửi đúng 1 goal tới \texttt{zone\_b}.
+
+\subsection*{7.4. Thực thi tuần tự, khóa lệnh mới, hủy lộ trình và vòng đời dọn dẹp Nav2}
+\addcontentsline{toc}{subsection}{7.4. Thực thi tuần tự, khóa lệnh mới, hủy lộ trình và thực thi Nav2}
+
+Khi hàng đợi lộ trình không rỗng, \texttt{RouteExecutor} (\path{tb4_voice_control/route_executor.py}) khởi chạy một luồng nền \texttt{semantic-route} để thực thi tuần tự từng vùng trong hàng đợi thông qua \texttt{BasicNavigatorBackend} (\path{tb4_voice_control/nav2_backend.py}):
+\begin{enumerate}[leftmargin=1.2cm]
+  \item \textbf{Khóa nhận lệnh mới khi đang di chuyển:} Ngay khi trạng thái chuyển sang \texttt{RuntimeState.NAVIGATING}, giao diện \texttt{VoiceControlWindow} vô hiệu hóa nút \textbf{Giữ để nói}, ô nhập văn bản và nút \textbf{Gửi lệnh văn bản}, đồng thời bật nút \textbf{Hủy lộ trình}. Nếu có bất kỳ yêu cầu nào cố tình gọi vào \texttt{RuntimeController} khi đang bận, bộ điều phối giữ nguyên trạng thái điều hướng hiện tại (\texttt{preserve\_state=True}) và trả về lỗi \texttt{route\_active} (\textit{``Một lộ trình đang chạy; hãy chờ hoàn tất hoặc nhấn Hủy.''}).
+  \item \textbf{Kiểm tra điều kiện sẵn sàng trước mỗi chặng (\texttt{wait\_for\_nav2}):} Với thời gian chờ mặc định \texttt{nav2\_timeout = 60.0\,s}, backend kiểm tra lần lượt: (a) đã nhận được pose thực trên \texttt{/amcl\_pose}, (b) dịch vụ vòng đời \texttt{bt\_navigator/get\_state} trả về trạng thái \texttt{active}, và (c) Action server \texttt{/navigate\_to\_pose} đã sẵn sàng.
+  \item \textbf{Gửi goal và cập nhật tiến độ (\texttt{\_navigate\_action}):} Tọa độ đích \texttt{GoalPose(x, y, yaw)} của vùng được chuyển thành \texttt{PoseStamped} trong frame \texttt{map} với quaternion phẳng:
+  \begin{equation}
+    q_x = 0, \qquad q_y = 0, \qquad q_z = \sin\left(\frac{\text{yaw}}{2}\right), \qquad q_w = \cos\left(\frac{\text{yaw}}{2}\right)
+  \end{equation}
+  Goal được gửi bất đồng bộ qua \texttt{send\_goal\_async}. Trong khi chờ kết quả (giới hạn \texttt{goal\_timeout = 180.0\,s} mỗi chặng), cứ mỗi \texttt{feedback\_period = 5.0\,s}, backend đọc phản hồi từ Nav2 để phát sự kiện \texttt{LegProgress} chứa chỉ số chặng (\texttt{leg\_index/leg\_count}), khoảng cách còn lại (\texttt{distance\_remaining}) và thời gian đã trôi qua (\texttt{elapsed\_seconds}) lên giao diện. Khi chặng đầu trả về \texttt{GoalStatus.STATUS\_SUCCEEDED}, \texttt{RouteExecutor} mới tự động chuyển sang chặng tiếp theo; nếu bất kỳ chặng nào thất bại hoặc bị hủy, toàn bộ các chặng còn lại trong hàng đợi bị dừng ngay lập tức.
+  \item \textbf{Hủy lộ trình hợp tác và trạng thái \texttt{CLEANING}:} Khi người vận hành nhấn \textbf{Hủy lộ trình} (\texttt{cancel()}), cờ \texttt{cancel\_event} được bật. Luồng thực thi gọi \texttt{handle.cancel\_goal\_async()} tới Nav2 và chờ xác nhận \texttt{goals\_canceling} cùng kết quả kết thúc \texttt{GoalStatus.STATUS\_CANCELED}. Nếu quá thời hạn thu hồi ban đầu mà Nav2 chưa xác nhận kết thúc, backend không tự ý bỏ rơi action đang chạy mà chuyển giao các đối tượng future sang luồng nền \texttt{nav2-cleanup} (\texttt{CleanupState.PENDING}, trạng thái giao diện \texttt{RuntimeState.CLEANING}: \textit{``Đang chờ Nav2 xác nhận xử lý hủy''}). Lệnh mới chỉ được mở lại khi việc hủy từ xa đã được xác nhận hoàn tất (\texttt{CleanupState.QUIESCENT}). Trong trường hợp khẩn cấp, người vận hành có thể nhấn nút \textbf{Buộc dừng chờ Nav2} (\texttt{force\_abort\_cleanup()}), khi đó hệ thống chuyển sang \texttt{CleanupState.FORCE\_ABORTED} và khóa vĩnh viễn việc gửi lệnh mới trong phiên làm việc hiện tại (\texttt{cleanup\_aborted}) để ngăn ngừa hai goal điều hướng xung đột trên robot.
+\end{enumerate}

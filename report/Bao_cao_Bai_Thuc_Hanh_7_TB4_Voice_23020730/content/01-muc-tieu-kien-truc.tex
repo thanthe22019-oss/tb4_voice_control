@@ -1,0 +1,148 @@
+\section*{1. Mục tiêu và yêu cầu Bài thực hành 7}
+\addcontentsline{toc}{section}{1. Mục tiêu và yêu cầu Bài thực hành 7}
+
+Bài thực hành 7 mở rộng hệ thống định vị và điều hướng tự động của robot di động TurtleBot~4 trong môi trường mô phỏng ROS~2 Humble và Ignition Gazebo sang bài toán tương tác người--robot ở mức ngữ nghĩa (semantic human--robot interaction). Thay vì yêu cầu người vận hành đặt đích thủ công bằng chuột trên RViz2 hoặc ghi nhớ tọa độ $(x, y, \text{yaw})$ trong hệ quy chiếu \texttt{map}, hệ thống cho phép phân vùng bản đồ thành các khu vực có tên gọi tự nhiên bằng tiếng Việt và điều khiển robot di chuyển giữa các khu vực thông qua câu lệnh giọng nói.
+
+Gói phần mềm \texttt{tb4\_voice\_control} được phát triển độc lập trên nền tảng bản đồ và cấu hình điều hướng đã tách từ gói baseline \texttt{tb4\_nav2} (tại commit \texttt{3625002e8059ae84ce604ee4039ae7b0cb3c22bd}) mà không chỉnh sửa mã nguồn hay dữ liệu của repository gốc. Các mục tiêu kỹ thuật trọng tâm của bài thực hành bao gồm:
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \textbf{Phân vùng bản đồ ngữ nghĩa bảo toàn bản đồ gốc:} Xây dựng mô hình dữ liệu vùng ngữ nghĩa (\texttt{SemanticMap}, \texttt{schema\_version: 1}) lưu trữ độc lập trong \path{config/regions.yaml}, giữ nguyên vẹn hai file bản đồ Occupancy Grid gốc (\path{maps/map.yaml} và \path{maps/map.pgm}) phục vụ AMCL và Nav2.
+  \item \textbf{Xây dựng công cụ Map Editor UI và CLI kiểm tra/xuất ảnh:} Cung cấp giao diện đồ họa PyQt5 (\texttt{map\_editor}) để vẽ đa giác (polygon), kéo chỉnh đỉnh, đặt vị trí đích (goal) và góc hướng (\texttt{yaw}), gán tên hiển thị, danh sách tên gọi đồng nghĩa (aliases) và màu sắc RGB; đồng thời kiểm tra tự động các ràng buộc hình học trước khi lưu và kết xuất ảnh minh chứng \path{artifacts/segmented_map.png}.
+  \item \textbf{Xây dựng pipeline nhận dạng giọng nói tiếng Việt qua Gemini API:} Thu âm theo cơ chế nhấn--giữ để nói (\textit{push-to-talk}) ở định dạng mono $16\,\text{kHz}$ PCM16 WAV trong bộ nhớ RAM và gửi tới mô hình chuyên biệt \texttt{gemini-3.5-transcribe} thông qua SDK \texttt{google-genai} được cô lập trong môi trường ảo \path{.venv-speech}, quản lý khóa xác thực an toàn qua biến môi trường \texttt{GEMINI\_API\_KEY}.
+  \item \textbf{Phân tích câu lệnh tiếng Việt tất định và lập lộ trình đa chặng:} Giải mã câu lệnh thuộc hai dạng \texttt{GO\_TO} (\textit{``Đi đến \dots''}) và \texttt{FROM\_TO} (\textit{``Di chuyển từ \dots{} đến \dots''}), hỗ trợ đối sánh alias dài nhất (ví dụ \textit{``phòng thí nghiệm''} ánh xạ về \texttt{zone\_b}), từ chối rõ ràng các vùng không tồn tại hoặc câu lệnh mơ hồ mà không phát sinh lệnh điều hướng sai.
+  \item \textbf{Thực thi điều hướng tuần tự và quản lý vòng đời hủy lệnh với Nav2:} Kết nối với Action \texttt{/navigate\_to\_pose} và topic \texttt{/amcl\_pose}, xác định vùng hiện tại của robot bằng kiểm tra điểm trong đa giác, thực thi lộ trình đơn chặng hoặc đa chặng, khóa nhận lệnh mới khi robot đang di chuyển và đảm bảo hủy lệnh hợp tác (\textit{cooperative cancellation}) an toàn với cơ chế chờ xác nhận dọn dẹp (\texttt{CLEANING}).
+\end{itemize}
+
+\section*{2. Kiến trúc tổng thể và cấu trúc gói phần mềm}
+\addcontentsline{toc}{section}{2. Kiến trúc tổng thể và cấu trúc gói phần mềm}
+
+\subsection*{2.1. Sơ đồ kiến trúc luồng dữ liệu và điều khiển}
+\addcontentsline{toc}{subsection}{2.1. Sơ đồ kiến trúc luồng dữ liệu và điều khiển}
+
+Hệ thống được thiết kế theo kiến trúc phân lớp tách biệt rõ ràng giữa tầng mô hình hình học/bản đồ, tầng thu âm và nhận dạng đám mây, tầng phân tích ngôn ngữ và điều phối lộ trình thuần Python (không phụ thuộc trực tiếp vào Qt hay ROS), và tầng giao tiếp ROS~2/Nav2 cùng giao diện người dùng PyQt5. Chuỗi xử lý đầu--cuối từ dữ liệu bản đồ và micro tới chuyển động của robot được mô tả như sau:
+
+\begin{center}
+\fbox{\begin{minipage}{0.94\textwidth}
+\centering
+\textbf{Bản đồ gốc (\texttt{maps/map.yaml + map.pgm})} $\longrightarrow$ \textbf{Map Editor UI / CLI (\texttt{map\_editor}, \texttt{validate\_regions})}\\[0.18cm]
+$\downarrow$\\[0.12cm]
+\textbf{Bản đồ ngữ nghĩa (\texttt{config/regions.yaml})} $+$ \textbf{Ảnh phân vùng (\texttt{artifacts/segmented\_map.png})}\\[0.18cm]
+$\downarrow$\\[0.12cm]
+\textbf{Microphone Push-to-Talk ($16\,\text{kHz}$ mono WAV)} $\longrightarrow$ \textbf{Gemini API (\texttt{gemini-3.5-transcribe})}\\[0.18cm]
+$\downarrow$ \textit{(hoặc nhập văn bản chẩn đoán trực tiếp trên Voice UI)}\\[0.12cm]
+\textbf{Command Parser (\texttt{GO\_TO} / \texttt{FROM\_TO}, chuẩn hóa tiếng Việt \& tra cứu Alias)}\\[0.18cm]
+$\downarrow$\\[0.12cm]
+\textbf{Route Planner (Pose \texttt{/amcl\_pose} $+$ kiểm tra điểm trong đa giác $\rightarrow$ chuỗi ID vùng đích)}\\[0.18cm]
+$\downarrow$\\[0.12cm]
+\textbf{Route Executor (Thực thi tuần tự từng chặng, khóa lệnh mới, xử lý Cancel / Cleanup)}\\[0.18cm]
+$\downarrow$\\[0.12cm]
+\textbf{Nav2 Backend (\texttt{BasicNavigatorBackend} $\leftrightarrow$ Action \texttt{/navigate\_to\_pose} \& \texttt{bt\_navigator})}
+\end{minipage}}
+\end{center}
+
+\subsection*{2.2. Cấu trúc thư mục của repository \texttt{tb4\_voice\_control}}
+\addcontentsline{toc}{subsection}{2.2. Cấu trúc thư mục của repository \texttt{tb4\_voice\_control}}
+
+Toàn bộ mã nguồn, cấu hình, bản đồ, kịch bản khởi chạy và bộ kiểm thử tự động của dự án được tổ chức theo cấu trúc gói \texttt{ament\_python} tiêu chuẩn của ROS~2 Humble:
+
+\begin{svcode}
+tb4_voice_control/
+|-- artifacts/
+|   `-- segmented_map.png          # Ảnh bản đồ phân vùng đã xác minh (788 x 1101 px)
+|-- config/
+|   |-- goals.yaml                 # Danh sách 3 goal phẳng cho tiện ích CLI
+|   |-- regions.yaml               # Định nghĩa 3 vùng ngữ nghĩa (zone_a, zone_b, zone_c)
+|   `-- voice.yaml                 # Cấu hình thu âm 16 kHz và model gemini-3.5-transcribe
+|-- docs/
+|   |-- DEMO.md                    # Kịch bản quay demo và danh sách cảnh cần thu thập
+|   |-- TEST_MATRIX.md             # Ma trận tách biệt AUTOMATED PASS và MANUAL PENDING
+|   `-- evidence/                  # Hồ sơ kiểm toán môi trường và log kiểm thử tự động
+|-- launch/
+|   |-- tb4_slam.launch.py         # Khởi chạy Gazebo + SLAM Toolbox trong world warehouse
+|   |-- tb4_nav2.launch.py         # Khởi chạy Gazebo + AMCL Localization + Nav2
+|   `-- voice_navigation.launch.py # Launch tích hợp có cờ bật/tắt Nav2 và Voice UI
+|-- maps/
+|   |-- map.yaml                   # Metadata Occupancy Grid gốc (resolution 0.05 m/px)
+|   `-- map.pgm                    # Ảnh bản đồ gốc kích thước 788 x 1101 px
+|-- scripts/
+|   |-- setup_speech_venv.sh       # Tạo .venv-speech cô lập và kiểm tra preflight
+|   `-- run_voice_control.sh       # Wrapper nạp ROS, workspace, .venv-speech và mở UI
+|-- tb4_voice_control/             # Mã nguồn các mô-đun Python của gói
+|-- test/                          # Bộ kiểm thử tự động pytest / ament và test SDK offline
+|-- package.xml                    # Khai báo phụ thuộc ROS 2 và ament_python
+|-- requirements-speech.txt        # Ràng buộc google-genai>=2.33,<2.34, numpy<2, sounddevice
+`-- setup.py                       # Khai báo data_files và 6 console_scripts entry points
+\end{svcode}
+
+\subsection*{2.3. Các mô-đun phần mềm, entry point và giao diện ROS 2}
+\addcontentsline{toc}{subsection}{2.3. Các mô-đun phần mềm, entry point và giao diện ROS 2}
+
+Bảng dưới đây tổng hợp vai trò của các mô-đun trong gói \texttt{tb4\_voice\_control}:
+
+\begin{longtable}{|p{0.31\textwidth}|p{0.59\textwidth}|}
+\hline
+\textbf{Mô-đun / Thành phần} & \textbf{Chức năng kỹ thuật chính} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Mô-đun / Thành phần} & \textbf{Chức năng kỹ thuật chính} \\
+\hline
+\endhead
+\texttt{map\_model.py} & Đọc và kiểm tra tính hợp lệ của \texttt{map.yaml} và \texttt{map.pgm}; tạo các mặt nạ bất biến \texttt{free\_mask}, \texttt{occupied\_mask}, \texttt{unknown\_mask}; thực hiện phép biến đổi tọa độ hai chiều \texttt{pixel\_to\_ros} và \texttt{ros\_to\_pixel}. \\
+\hline
+\texttt{regions.py} & Định nghĩa cấu trúc bất biến \texttt{GoalPose}, \texttt{Region}, \texttt{SemanticMap}; chuẩn hóa chuỗi tiếng Việt (\texttt{normalize\_alias}); đọc và ghi nguyên tử (\textit{atomic save}) file \texttt{regions.yaml}. \\
+\hline
+\texttt{region\_validation.py} & Kiểm tra toàn diện lược đồ YAML, trùng lặp alias, đỉnh vượt biên ảnh, đa giác tự cắt hoặc suy biến, vị trí đích ngoài vùng hoặc trên ô không tự do, và sự chồng lấn phần trong đã co (\textit{eroded interior}) giữa các vùng. \\
+\hline
+\texttt{editor\_document.py} & Quản lý trạng thái tài liệu trong Map Editor độc lập với giao diện Qt, hỗ trợ lịch sử hoàn tác/làm lại (\texttt{undo}/\texttt{redo}) tối đa 100 lệnh và theo dõi trạng thái thay đổi chưa lưu (\texttt{is\_dirty}). \\
+\hline
+\texttt{map\_canvas.py} & Khung vẽ \texttt{QGraphicsView} hiển thị bản đồ ở độ phân giải gốc, hỗ trợ 4 chế độ tương tác (\texttt{select}, \texttt{draw\_polygon}, \texttt{place\_goal}, \texttt{pan}), kéo thả đỉnh đa giác và đặt hướng đích trực quan. \\
+\hline
+\texttt{map\_editor.py} & Cửa sổ chính \texttt{MapEditorWindow} kết nối khung vẽ với bảng thuộc tính vùng, danh sách lỗi kiểm tra trực tiếp, chức năng lưu YAML và xuất ảnh PNG. \\
+\hline
+\texttt{map\_render.py} & Kết xuất tất định (\textit{deterministic rendering}) bản đồ phân vùng ra ảnh PNG RGB với độ phủ màu 35\%, nhãn tiếng Việt Unicode (\texttt{DejaVuSans.ttf}) tại trọng tâm đa giác và mũi tên chỉ hướng goal. \\
+\hline
+\texttt{validate\_regions.py} & Công cụ dòng lệnh kiểm tra tính hợp lệ của \texttt{regions.yaml} không cần khởi chạy ROS hay giao diện đồ họa (trả mã thoát \texttt{0} khi hợp lệ, \texttt{2} khi có lỗi). \\
+\hline
+\texttt{audio\_capture.py} & Bộ thu âm \texttt{AudioRecorder} an toàn luồng (\textit{thread-safe}) qua \texttt{sounddevice.InputStream}, thu mẫu mono \texttt{float32} ở tần số $16\,\text{kHz}$ với giới hạn dung lượng bộ đệm theo \texttt{max\_record\_seconds}. \\
+\hline
+\texttt{speech.py} & Bộ chuyển đổi \texttt{GeminiTranscriber} mã hóa âm thanh sang PCM16 WAV Base64 trong bộ nhớ, gọi Generate Content API (\texttt{gemini-3.5-transcribe}), giải mã các đoạn \texttt{audio\_transcription.text} hoặc \texttt{response.text} và phân loại lỗi an toàn. \\
+\hline
+\texttt{command\_parser.py} & Bộ phân tích cú pháp tiếng Việt tất định cho hai ý định \texttt{GO\_TO} và \texttt{FROM\_TO}, giải quyết alias theo nguyên tắc khớp dài nhất và phát sinh mã lỗi \texttt{CommandError} tường minh. \\
+\hline
+\texttt{route\_planner.py} & Xác định vùng hiện tại của robot (\texttt{find\_current\_region}) từ tọa độ ROS bằng \texttt{cv2.pointPolygonTest} và rút gọn danh sách các chặng cần đi (\texttt{plan\_route}). \\
+\hline
+\texttt{route\_executor.py} & Thực thi tuần tự các chặng điều hướng trên luồng nền riêng (\texttt{semantic-route}), hỗ trợ hủy hợp tác và quản lý trạng thái dọn dẹp (\texttt{CleanupState}). \\
+\hline
+\texttt{runtime\_controller.py} & Bộ điều phối trung tâm (\texttt{RuntimeController}) nối kết kết quả văn bản/nhận dạng với bộ phân tích, lập lộ trình và thực thi, phát sự kiện trạng thái cho tầng giao diện. \\
+\hline
+\texttt{nav2\_backend.py} & Lớp tiếp hợp \texttt{BasicNavigatorBackend} kiểm tra tính sẵn sàng của \texttt{/amcl\_pose}, vòng đời \texttt{bt\_navigator} và Action \texttt{/navigate\_to\_pose}, gửi goal và đảm bảo xác nhận hủy trên ROS~2 Humble. \\
+\hline
+\texttt{qt\_workers.py}, \texttt{voice\_app.py} & Các đối tượng \texttt{SpeechWorker}, \texttt{NavigationWorker} chạy trên \texttt{QThread} riêng biệt và cửa sổ \texttt{VoiceControlWindow} hiển thị trạng thái điều hướng theo thời gian thực. \\
+\hline
+\texttt{goal\_recorder.py}, \texttt{navigate\_goals.py} & Tiện ích CLI ghi nhận pose thực từ \texttt{/amcl\_pose} vào \texttt{goals.yaml} và điều hướng tuần tự qua danh sách goal từ dòng lệnh. \\
+\hline
+\end{longtable}
+
+Trong \path{setup.py}, gói đăng ký 6 \texttt{console\_scripts} entry points chuẩn của ROS~2: \texttt{map\_editor}, \texttt{render\_segmented\_map}, \texttt{validate\_regions}, \texttt{voice\_control}, \texttt{record\_goal} và \texttt{navigate\_goals}. Ở tầng ROS~2, hệ thống tương tác trực tiếp với các giao diện sau:
+
+\begin{longtable}{|p{0.26\textwidth}|p{0.32\textwidth}|p{0.32\textwidth}|}
+\hline
+\textbf{Tên giao diện} & \textbf{Kiểu thông điệp / dịch vụ} & \textbf{Vai trò trong hệ thống} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Tên giao diện} & \textbf{Kiểu thông điệp / dịch vụ} & \textbf{Vai trò trong hệ thống} \\
+\hline
+\endhead
+\texttt{/amcl\_pose} & \texttt{geometry\_msgs/msg/PoseWithCovarianceStamped} & Cung cấp vị trí $(x, y, \text{yaw})$ của robot trong frame \texttt{map} (QoS \texttt{TRANSIENT\_LOCAL}, \texttt{RELIABLE}) để xác định vùng xuất phát trước khi lập lộ trình. \\
+\hline
+\texttt{/navigate\_to\_pose} & \texttt{nav2\_msgs/action/NavigateToPose} & Action server nhận từng đích điều hướng của mỗi chặng, phản hồi khoảng cách còn lại (\texttt{distance\_remaining}), thời gian di chuyển (\texttt{navigation\_time}) và trạng thái kết thúc. \\
+\hline
+\texttt{bt\_navigator/get\_state} & \texttt{lifecycle\_msgs/srv/GetState} & Dịch vụ kiểm tra node điều phối Behavior Tree của Nav2 đã đạt trạng thái \texttt{active} trước khi cho phép gửi goal. \\
+\hline
+\texttt{/map} & \texttt{nav\_msgs/msg/OccupancyGrid} & Bản đồ lưới chiếm chỗ tĩnh được \texttt{map\_server} xuất bản từ \path{maps/map.yaml} và \path{maps/map.pgm}. \\
+\hline
+\texttt{/scan}, \texttt{/odom}, \texttt{/cmd\_vel} & \texttt{LaserScan}, \texttt{Odometry}, \texttt{Twist} & Dữ liệu cảm biến LiDAR, odometry và lệnh vận tốc cơ sở phục vụ định vị AMCL, cập nhật costmap và điều khiển bám quỹ đạo trong Nav2. \\
+\hline
+\end{longtable}
