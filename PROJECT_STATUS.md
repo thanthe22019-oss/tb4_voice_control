@@ -18,18 +18,18 @@ in this file or commit one.
 
 ## Fresh post-merge offline verification
 
-On 2026-11-10, on `main` after `5364aff`, with ROS Humble sourced and Qt
+On 2026-11-10, on `main` after `86e82d7`, with ROS Humble sourced and Qt
 offscreen:
 
 - Explicit actual-SDK acceptance: 9 passed with Python 3.10.12 and
   google-genai 2.33.0 in the newly created main-checkout `.venv-speech`.
   Synthetic key + MockTransport only; no billed Gemini request was made.
-- Full portable ROS pytest: 308 passed, 10 skipped, 2 inherited deprecation
+- Full portable ROS pytest: 309 passed, 10 skipped, 2 inherited deprecation
   warnings. Skips are the existing copyright check plus 9 opt-in SDK tests.
 - The full portable suite run through `.venv-speech/bin/python` with ROS sourced
-  also passed 308 tests with the same 10 skips and 2 warnings.
-- Colcon build: 1 package finished. Colcon test: 308 passed, 10 skipped,
-  2 inherited warnings. Test result: 318 tests, 0 errors, 0 failures,
+  also passed 309 tests with the same 10 skips and 2 warnings.
+- Colcon build: 1 package finished. Colcon test: 309 passed, 10 skipped,
+  2 inherited warnings. Test result: 319 tests, 0 errors, 0 failures,
   10 skipped; one package emitted the same warnings on stderr.
 - Speech setup completed with google-genai 2.33.0, NumPy 1.21.5,
   sounddevice 0.5.6 and the default input device detected. The setup now
@@ -50,13 +50,14 @@ a later Interactions migration needs a ROS/Python upgrade and fresh SDK proof.
 
 ## Pending acceptance and publication
 
-- Live credential diagnostic on 2026-11-10 used the key only through transient
-  process input and did not persist it. Model metadata/catalog access succeeded,
-  but `generateContent` did not: the configured model and the catalog's latest
-  Flash alias returned HTTP 504, while `gemini-2.5-flash` returned HTTP 404.
-  No live transcript was produced, so this is failure evidence rather than
-  acceptance. Re-test with a newly rotated/restricted key and a provider-confirmed
-  inference model before changing the matrix status.
+- Live credential diagnostics on 2026-11-10 used keys only through transient
+  process input and did not persist them. Model metadata/catalog access worked,
+  but the original 30-second inference deadline repeatedly returned HTTP 504.
+  With a 120-second deadline, both text generation and the production inline-WAV
+  adapter completed on `gemini-3.8-flash`; the shipped timeout was therefore
+  raised to 120 seconds. The 0.5-second WAV contained silence and still produced
+  non-empty text, so this proves connectivity only, not recognition accuracy.
+  Both keys pasted into chat must be revoked/rotated.
 - Real-key Gemini transcription of the three Vietnamese commands, including
   correctness and latency, remains pending. Unknown-region UI error and absence
   of a Nav2 goal also require live evidence. See `docs/TEST_MATRIX.md`.
