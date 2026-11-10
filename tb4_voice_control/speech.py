@@ -62,10 +62,28 @@ def _api_error_message(error: Exception) -> str:
     return 'Speech transcription failed; try again.'
 
 
+def _transcription_text(response: Any) -> str | None:
+    """Prefer ordered transcription segments, retaining plain-text compatibility."""
+    candidates = getattr(response, 'candidates', None)
+    if isinstance(candidates, (list, tuple)) and candidates:
+        content = getattr(candidates[0], 'content', None)
+        parts = getattr(content, 'parts', None)
+        if isinstance(parts, (list, tuple)):
+            segments = []
+            for part in parts:
+                text = getattr(getattr(part, 'audio_transcription', None), 'text', None)
+                if isinstance(text, str):
+                    segments.append(text.strip())
+            if segments:
+                return ' '.join(text for text in segments if text)
+    text = getattr(response, 'text', None)
+    return text.strip() if isinstance(text, str) else None
+
+
 class GeminiTranscriber:
     """Transcribe mono samples using a lazy Generate Content client."""
 
-    def __init__(self, model: str = 'gemini-3.8-flash', language: str = 'vi',
+    def __init__(self, model: str = 'gemini-3.5-transcribe', language: str = 'vi',
                  request_timeout_seconds: float = 120.0, client: Any | None = None,
                  client_factory: Callable[[str], Any] | None = None):
         if not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0:
@@ -115,10 +133,10 @@ class GeminiTranscriber:
             response = self._client.models.generate_content(**request)
         except Exception as error:
             raise SpeechModelError(_api_error_message(error)) from None
-        output_text = getattr(response, 'text', None)
-        if not isinstance(output_text, str):
+        output_text = _transcription_text(response)
+        if output_text is None:
             raise SpeechModelError('Speech service returned a malformed transcript.')
         return TranscriptionResult(
-            text=output_text.strip(), language=self.language,
+            text=output_text, language=self.language,
             duration_seconds=float(audio.size) / sample_rate,
         )

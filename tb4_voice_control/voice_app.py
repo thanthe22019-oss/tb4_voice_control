@@ -359,7 +359,7 @@ def main(argv=None):
         max_record_seconds=float(config.get('max_record_seconds', 15)),
     )
     transcriber = GeminiTranscriber(
-        model=str(config.get('model', 'gemini-3.8-flash')),
+        model=str(config.get('model', 'gemini-3.5-transcribe')),
         language=str(config.get('language', 'vi')),
         request_timeout_seconds=float(config.get('request_timeout_seconds', 120.0)),
     )

@@ -53,9 +53,9 @@
 
 - [ ] **Step 3: Run the focused tests and verify RED**
 
-  Run: `PYTHONPATH="$PWD" pytest -q test/test_speech.py test/test_install_assets.py::test_voice_config_uses_only_gemini_settings test/test_voice_app.py::test_window_shows_runtime_context_and_push_to_talk_pipeline`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" pytest -q test/test_speech.py test/test_install_assets.py::test_voice_config_uses_only_gemini_settings test/test_voice_app.py::test_window_shows_runtime_context_and_push_to_talk_pipeline`
 
-  Run: `PYTHONPATH="$PWD" .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" ../../.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
 
   Expected: both commands FAIL because specialized responses are reported as malformed and defaults still resolve to `gemini-3.8-flash`.
 
@@ -75,7 +75,7 @@
 
 - [ ] **Step 7: Run explicit SDK acceptance**
 
-  Run: `PYTHONPATH="$PWD" .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" ../../.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
 
   Expected: all SDK acceptance tests PASS without network access or a real key.
 
@@ -102,7 +102,7 @@
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
-  Run: `PYTHONPATH="$PWD" pytest -q test/test_speech.py::test_api_failures_are_categorized_without_leaking_details`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" pytest -q test/test_speech.py::test_api_failures_are_categorized_without_leaking_details`
 
   Expected: FAIL because status 504 currently maps to generic `failed`.
 
@@ -112,9 +112,9 @@
 
 - [ ] **Step 4: Run unit and actual-SDK focused tests**
 
-  Run: `PYTHONPATH="$PWD" pytest -q test/test_speech.py`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" pytest -q test/test_speech.py`
 
-  Run: `PYTHONPATH="$PWD" .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" ../../.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
 
   Expected: both commands PASS; actual SDK makes one mock request per case and performs no retry wait.
 
@@ -124,9 +124,9 @@
 
 - [ ] **Step 6: Run the complete proof**
 
-  Run: `PYTHONPATH="$PWD" pytest -q`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" pytest -q`
 
-  Run: `PYTHONPATH="$PWD" .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
+  Run: `PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" ../../.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk`
 
   Run: `source /opt/ros/humble/setup.bash && colcon build --symlink-install && colcon test && colcon test-result --verbose`
 

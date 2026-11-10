@@ -15,16 +15,19 @@ from tb4_voice_control import speech
 class FakeModelsClient:
     """Capture requests at the external Generate Content boundary."""
 
-    def __init__(self, output_text=' Đi đến khu vực A. ', error=None):
+    def __init__(self, output_text=' Đi đến khu vực A. ', error=None, response=None):
         self.models = self
         self.output_text = output_text
         self.error = error
+        self.response = response
         self.calls = []
 
     def generate_content(self, *, model, contents, config):
         self.calls.append({'model': model, 'contents': contents, 'config': config})
         if self.error is not None:
             raise self.error
+        if self.response is not None:
+            return self.response
         return SimpleNamespace(text=self.output_text)
 
 
@@ -57,7 +60,7 @@ def test_request_is_stateless_bounded_and_has_no_continuation():
 
     request = client.calls[0]
     assert set(request) == {'model', 'contents', 'config'}
-    assert request['model'] == 'gemini-3.8-flash'
+    assert request['model'] == 'gemini-3.5-transcribe'
     assert request['config'] == {
         'store': False, 'automatic_continuation': False,
         'http_options': {'timeout': 120000},
@@ -69,6 +72,43 @@ def test_valid_output_returns_existing_result_contract():
     result = speech.GeminiTranscriber(client=client).transcribe(np.zeros(4000), 16000)
 
     assert result == speech.TranscriptionResult('Đi đến khu vực A.', 'vi', .25)
+
+
+def test_audio_transcription_parts_return_existing_result_contract():
+    response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=' Đi đến khu vực A. ')),
+    ]))], text='Fallback must not override the transcription')
+    result = speech.GeminiTranscriber(client=FakeModelsClient(response=response)).transcribe(
+        np.zeros(4000), 16000)
+
+    assert result == speech.TranscriptionResult('Đi đến khu vực A.', 'vi', .25)
+
+
+def test_audio_transcription_parts_preserve_order():
+    response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=' Đi đến ')),
+        SimpleNamespace(text='Unrelated text part'),
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=' \n ')),
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=42)),
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=' khu vực A. ')),
+    ])), SimpleNamespace(content=SimpleNamespace(parts=[
+        SimpleNamespace(audio_transcription=SimpleNamespace(text='Ignore another candidate')),
+    ]))])
+    result = speech.GeminiTranscriber(client=FakeModelsClient(response=response)).transcribe(
+        [0.], 16000)
+
+    assert result.text == 'Đi đến khu vực A.'
+
+
+@pytest.mark.parametrize('text', ['', ' \n '])
+def test_empty_audio_transcription_is_valid(text):
+    response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[
+        SimpleNamespace(audio_transcription=SimpleNamespace(text=text)),
+    ]))], text='Fallback must not override an empty transcription')
+    result = speech.GeminiTranscriber(client=FakeModelsClient(response=response)).transcribe(
+        [0.], 16000)
+
+    assert result == speech.TranscriptionResult('', 'vi', 1 / 16000)
 
 
 @pytest.mark.parametrize('sample_rate', [0, -1])
@@ -133,7 +173,10 @@ def test_empty_output_is_a_valid_transcript(monkeypatch):
 
 
 @pytest.mark.parametrize('response', [SimpleNamespace(), SimpleNamespace(text=None),
-                                      SimpleNamespace(text=42)])
+                                      SimpleNamespace(text=42),
+                                      SimpleNamespace(candidates=[SimpleNamespace(
+                                          content=SimpleNamespace(parts=[SimpleNamespace(
+                                              audio_transcription=SimpleNamespace(text=42))]))])])
 def test_malformed_output_is_a_typed_error(response):
     client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kw: response))
     with pytest.raises(speech.SpeechModelError, match='malformed'):

@@ -70,7 +70,7 @@ def test_real_sdk_accepts_inline_wav_and_stateless_config(sdk_transport, finish_
     assert len(requests) == 1
     request = requests[0]
     assert request.method == 'POST'
-    assert request.url.path.endswith('/models/gemini-3.8-flash:generateContent')
+    assert request.url.path.endswith('/models/gemini-3.5-transcribe:generateContent')
     assert set(request.extensions['timeout'].values()) == {1.25}
     body = json.loads(request.content)
     assert body['store'] is False
@@ -81,6 +81,24 @@ def test_real_sdk_accepts_inline_wav_and_stateless_config(sdk_transport, finish_
         assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 8000)
         np.testing.assert_array_equal(
             np.frombuffer(wav.readframes(3), dtype='<i2'), [-32767, 0, 32767])
+
+
+def test_real_sdk_decodes_audio_transcription_part(sdk_transport, httpx):
+    requests, handlers = sdk_transport
+    handlers.append(lambda request: httpx.Response(200, json={
+        'candidates': [{'content': {'role': 'model', 'parts': [
+            {'audioTranscription': {'text': ' Đi đến khu vực A. '}}]},
+            'finishReason': 'STOP'}],
+    }))
+    transcriber = speech.GeminiTranscriber()
+    try:
+        result = transcriber.transcribe(np.zeros(4000), 16000)
+    finally:
+        if transcriber._client is not None:
+            transcriber._client.close()
+
+    assert result == speech.TranscriptionResult('Đi đến khu vực A.', 'vi', .25)
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize(('failure', 'category'), [

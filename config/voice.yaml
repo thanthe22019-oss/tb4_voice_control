@@ -1,6 +1,6 @@
 sample_rate: 16000
 max_record_seconds: 15
 provider: gemini
-model: gemini-3.8-flash
+model: gemini-3.5-transcribe
 language: vi
 request_timeout_seconds: 120

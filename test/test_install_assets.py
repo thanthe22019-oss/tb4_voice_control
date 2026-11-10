@@ -25,7 +25,7 @@ def test_voice_config_uses_only_gemini_settings(project_root):
     """The shipped runtime configuration must select the API speech provider."""
     config = yaml.safe_load((project_root / 'config' / 'voice.yaml').read_text())
     assert config == {
-        'provider': 'gemini', 'model': 'gemini-3.8-flash', 'language': 'vi',
+        'provider': 'gemini', 'model': 'gemini-3.5-transcribe', 'language': 'vi',
         'request_timeout_seconds': 120, 'sample_rate': 16000,
         'max_record_seconds': 15,
     }

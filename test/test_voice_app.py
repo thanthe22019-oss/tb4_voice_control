@@ -80,7 +80,7 @@ class Recorder:
 class Transcriber:
     """Return one stable Vietnamese transcript and Gemini configuration."""
 
-    model = 'gemini-3.8-flash'
+    model = 'gemini-3.5-transcribe'
 
     def transcribe(self, samples, sample_rate):
         """Validate worker arguments and produce a real result object."""
@@ -181,7 +181,7 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
     """Dropping any runtime signal leaves a required diagnostic field stale."""
     widget, backend, recorder, _ = window
     assert 'Nav2 sẵn sàng' in widget.connection_label.text()
-    assert widget.speech_label.text() == 'Gemini API — gemini-3.8-flash'
+    assert widget.speech_label.text() == 'Gemini API — gemini-3.5-transcribe'
     labels = [label.text() for label in widget.findChildren(QLabel)]
     assert 'Nhận dạng:' in labels
     assert not any('CUDA' in text or 'GPU' in text for text in labels)
@@ -208,8 +208,9 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
 @pytest.mark.parametrize(('configured_timeout', 'expected_timeout'), [
     (12, 12.0), (None, 120.0),
 ])
+@pytest.mark.parametrize('configured_model', ['configured-gemini-model', None])
 def test_main_configures_gemini_and_audio_from_yaml(
-        tmp_path, monkeypatch, configured_timeout, expected_timeout):
+        tmp_path, monkeypatch, configured_timeout, expected_timeout, configured_model):
     """Runtime settings must reach the speech and audio adapter boundaries."""
     import rclpy
     from tb4_voice_control import nav2_backend, voice_app
@@ -217,10 +218,12 @@ def test_main_configures_gemini_and_audio_from_yaml(
     semantic, occupancy = runtime_map(tmp_path)
     config_path = tmp_path / 'voice.yaml'
     config = {
-        'provider': 'gemini', 'model': 'configured-gemini-model',
+        'provider': 'gemini',
         'language': 'en',
         'sample_rate': 22050, 'max_record_seconds': 7,
     }
+    if configured_model is not None:
+        config['model'] = configured_model
     if configured_timeout is not None:
         config['request_timeout_seconds'] = configured_timeout
     config_path.write_text(yaml.safe_dump(config))
@@ -251,7 +254,7 @@ def test_main_configures_gemini_and_audio_from_yaml(
         instance=lambda: SimpleNamespace(exec_=lambda: 0)))
     assert voice_app.main([]) == 0
     assert captured['speech'] == {
-        'model': 'configured-gemini-model', 'language': 'en',
+        'model': configured_model or 'gemini-3.5-transcribe', 'language': 'en',
         'request_timeout_seconds': expected_timeout,
     }
     assert captured['audio'] == {'sample_rate': 22050, 'max_record_seconds': 7.0}
