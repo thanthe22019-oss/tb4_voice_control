@@ -186,7 +186,7 @@ def test_malformed_output_is_a_typed_error(response):
 class HttpFailure(Exception):
 
     def __init__(self, status_code):
-        super().__init__('SECRET_SENTINEL')
+        super().__init__('SECRET_SENTINEL synthetic-offline-test-key')
         self.status_code = status_code
 
 
@@ -208,6 +208,7 @@ def test_sdk_wrapper_metadata_is_actionable(error, category):
 
 @pytest.mark.parametrize(('error', 'category'), [
     (TimeoutError('SECRET_SENTINEL'), 'timeout'),
+    (HttpFailure(504), 'timeout'),
     (HttpFailure(401), 'authentication'),
     (HttpFailure(403), 'authentication'),
     (HttpFailure(429), 'rate limit'),
@@ -221,6 +222,7 @@ def test_api_failures_are_categorized_without_leaking_details(error, category):
     with pytest.raises(speech.SpeechModelError, match=category) as caught:
         speech.GeminiTranscriber(client=client).transcribe([0.], 16000)
     assert 'SECRET_SENTINEL' not in str(caught.value)
+    assert 'synthetic-offline-test-key' not in str(caught.value)
     assert caught.value.__suppress_context__
 
 

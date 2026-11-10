@@ -102,7 +102,7 @@ def test_real_sdk_decodes_audio_transcription_part(sdk_transport, httpx):
 
 
 @pytest.mark.parametrize(('failure', 'category'), [
-    (429, 'rate limit'), (500, 'failed'), (503, 'failed'),
+    (429, 'rate limit'), (500, 'failed'), (503, 'failed'), (504, 'timeout'),
     ('connection', 'network'), ('timeout', 'timeout'),
 ])
 def test_real_sdk_failure_has_one_attempt_and_no_retry_wait(

@@ -1,7 +1,8 @@
 # TB4 Voice Control — Recovery Handoff
 
 Updated 2026-11-10 (Asia/Ho_Chi_Minh). Active checkout:
-`/home/alex/Interaction/tb4_voice_control`, branch `main`. The completed
+`/home/alex/Interaction/tb4_voice_control/.worktrees/gemini-transcribe-response`,
+branch `fix/gemini-transcribe-response`. The completed
 `feature/implementation` history was fast-forwarded into `main` through
 `5a34721`; the post-merge clean-setup fix is `5364aff`. Base/bootstrap commit:
 `3161f4d`; Gemini migration reviewed range: `d53fc62..bb5e637`; SDK
@@ -16,7 +17,31 @@ semantic regions, parser, route executor and Nav2 cleanup lifecycle are retained
 Speech audio is sent to Google, requiring Internet and quota. Never record a key
 in this file or commit one.
 
-## Fresh post-merge offline verification
+## Fresh dedicated-model offline verification
+
+On 2026-11-10, in the isolated fix worktree after `80aeed5`, the default is
+`gemini-3.5-transcribe`. The adapter decodes ordered
+`audio_transcription.text` segments from the first candidate, keeps the
+plain `response.text` fallback, and categorizes HTTP 504 as timeout.
+
+- Speech unit tests: 33 passed. The new 504 case first failed with the
+  generic transcription error, then passed after the timeout mapping.
+- Explicit actual-SDK acceptance: 11 passed using the speech venv and
+  synthetic key + MockTransport only. The 504 case also failed before the
+  mapping; each transport case enforces one request and no retry wait.
+- Full pytest with ROS Humble sourced: 317 passed, 12 skipped,
+  2 inherited SelectableGroups deprecation warnings. Skips are the existing
+  copyright check plus 11 opt-in SDK tests.
+- Colcon build and test each finished 1 package. Colcon pytest: 317 passed,
+  12 skipped, 2 inherited warnings; `colcon test-result --verbose` reported
+  329 tests, 0 errors, 0 failures, 12 skipped. Package stderr contained the
+  same deprecation warnings.
+- `git diff --check` passed. The plan's original secret-scan expression
+  matched only its own documented command; a corrected literal credential
+  prefix scan found zero matching files. No real key, captured audio or
+  live API request was used for this verification.
+
+## Historical post-merge offline verification
 
 On 2026-11-10, on `main` after `86e82d7`, with ROS Humble sourced and Qt
 offscreen:
@@ -41,7 +66,7 @@ Mandatory separate SDK acceptance/CI command (default pytest skips it):
 
 ```bash
 PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
-  .venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk
+  ../../.venv-speech/bin/python -m pytest -q test/test_speech_sdk.py --run-speech-sdk
 ```
 
 The flag fails if SDK 2.33.x is absent or incompatible. Omitting it leaves the
@@ -58,18 +83,31 @@ a later Interactions migration needs a ROS/Python upgrade and fresh SDK proof.
   raised to 120 seconds. The 0.5-second WAV contained silence and still produced
   non-empty text, so this proves connectivity only, not recognition accuracy.
   Both keys pasted into chat must be revoked/rotated.
-- Real-key Gemini transcription of the three Vietnamese commands, including
-  correctness and latency, remains pending. Unknown-region UI error and absence
-  of a Nav2 goal also require live evidence. See `docs/TEST_MATRIX.md`.
-- Live TurtleBot 4/Nav2 simulation acceptance remains pending.
+- A later diagnostic using the captured WAV and the production request shape
+  reached HTTP 504 on `gemini-3.8-flash` after roughly 107 seconds.
+  `gemini-3.5-transcribe` returned in roughly 3.2 seconds with a specialized
+  `audio_transcription` payload. The old adapter read only `response.text`
+  and reported this valid response as malformed; the dedicated-model fix
+  now decodes that payload. This response alone does not establish Vietnamese
+  transcript accuracy.
+- The ROS/TurtleBot 4 launch tree, RViz, Gazebo server/gui and separate Voice
+  Control runner were shut down before implementation. SIGINT/SIGTERM stopped
+  the launch and simulator processes; the final Voice Control child required
+  SIGKILL. A host process check returned `NO_RELATED_PROCESSES`; no files or
+  data were removed.
+- Vietnamese transcript accuracy for the three commands and live TurtleBot
+  4/Nav2 acceptance remain pending until the UI is relaunched with a fresh
+  restricted key. Unknown-region UI error and absence of a Nav2 goal also
+  require live evidence. See `docs/TEST_MATRIX.md`.
 - GitHub publication and video remain pending; no public remote is verified.
 - The academic HTML/PDF report remains deferred and outside this milestone.
 
 Historical CUDA and microphone runs, plans and reviews are evidence of the old
 provider only and do not establish current Gemini acceptance. Their details
 remain in repository history and the explicitly marked historical plans/specs.
-The implementation is merged locally; do not publish without the user's
-GitHub authentication/remote choice.
+The earlier runtime implementation is merged locally; the dedicated-model fix
+is still on the isolated branch for review and integration. Do not publish
+without the user's GitHub authentication/remote choice.
 
 ## Resume
 

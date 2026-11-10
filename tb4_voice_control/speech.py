@@ -51,7 +51,8 @@ def _api_error_message(error: Exception) -> str:
         status = getattr(error, 'code', None)
     if status is None:
         status = getattr(getattr(error, 'response', None), 'status_code', None)
-    if isinstance(error, TimeoutError) or names & {'TimeoutException', 'APITimeoutError'}:
+    if (status == 504 or isinstance(error, TimeoutError)
+            or names & {'TimeoutException', 'APITimeoutError'}):
         return 'Speech transcription timeout; try again.'
     if status in (401, 403):
         return 'Speech authentication failed; check GEMINI_API_KEY.'
