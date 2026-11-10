@@ -50,6 +50,13 @@ a later Interactions migration needs a ROS/Python upgrade and fresh SDK proof.
 
 ## Pending acceptance and publication
 
+- Live credential diagnostic on 2026-11-10 used the key only through transient
+  process input and did not persist it. Model metadata/catalog access succeeded,
+  but `generateContent` did not: the configured model and the catalog's latest
+  Flash alias returned HTTP 504, while `gemini-2.5-flash` returned HTTP 404.
+  No live transcript was produced, so this is failure evidence rather than
+  acceptance. Re-test with a newly rotated/restricted key and a provider-confirmed
+  inference model before changing the matrix status.
 - Real-key Gemini transcription of the three Vietnamese commands, including
   correctness and latency, remains pending. Unknown-region UI error and absence
   of a Nav2 goal also require live evidence. See `docs/TEST_MATRIX.md`.
