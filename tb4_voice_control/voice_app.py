@@ -361,7 +361,7 @@ def main(argv=None):
     transcriber = GeminiTranscriber(
         model=str(config.get('model', 'gemini-3.8-flash')),
         language=str(config.get('language', 'vi')),
-        request_timeout_seconds=float(config.get('request_timeout_seconds', 30.0)),
+        request_timeout_seconds=float(config.get('request_timeout_seconds', 120.0)),
     )
     app = QApplication.instance() or QApplication([sys.argv[0]])
     closed = False

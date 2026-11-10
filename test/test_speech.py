@@ -60,7 +60,7 @@ def test_request_is_stateless_bounded_and_has_no_continuation():
     assert request['model'] == 'gemini-3.8-flash'
     assert request['config'] == {
         'store': False, 'automatic_continuation': False,
-        'http_options': {'timeout': 30000},
+        'http_options': {'timeout': 120000},
     }
 
 

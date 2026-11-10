@@ -205,18 +205,25 @@ def test_window_shows_runtime_context_and_push_to_talk_pipeline(window, app):
     assert widget.cancel_button.isEnabled()
 
 
-def test_main_configures_gemini_and_audio_from_yaml(tmp_path, monkeypatch):
+@pytest.mark.parametrize(('configured_timeout', 'expected_timeout'), [
+    (12, 12.0), (None, 120.0),
+])
+def test_main_configures_gemini_and_audio_from_yaml(
+        tmp_path, monkeypatch, configured_timeout, expected_timeout):
     """Runtime settings must reach the speech and audio adapter boundaries."""
     import rclpy
     from tb4_voice_control import nav2_backend, voice_app
 
     semantic, occupancy = runtime_map(tmp_path)
     config_path = tmp_path / 'voice.yaml'
-    config_path.write_text(yaml.safe_dump({
+    config = {
         'provider': 'gemini', 'model': 'configured-gemini-model',
-        'language': 'en', 'request_timeout_seconds': 12,
+        'language': 'en',
         'sample_rate': 22050, 'max_record_seconds': 7,
-    }))
+    }
+    if configured_timeout is not None:
+        config['request_timeout_seconds'] = configured_timeout
+    config_path.write_text(yaml.safe_dump(config))
     monkeypatch.setattr(voice_app, '_parse_runtime_arguments', lambda argv: (
         SimpleNamespace(regions='regions', voice_config=config_path), []))
     monkeypatch.setattr(voice_app, 'load_regions', lambda path: semantic)
@@ -245,7 +252,7 @@ def test_main_configures_gemini_and_audio_from_yaml(tmp_path, monkeypatch):
     assert voice_app.main([]) == 0
     assert captured['speech'] == {
         'model': 'configured-gemini-model', 'language': 'en',
-        'request_timeout_seconds': 12.0,
+        'request_timeout_seconds': expected_timeout,
     }
     assert captured['audio'] == {'sample_rate': 22050, 'max_record_seconds': 7.0}
     assert captured['window']['sample_rate'] == 22050

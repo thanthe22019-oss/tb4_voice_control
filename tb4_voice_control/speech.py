@@ -66,7 +66,7 @@ class GeminiTranscriber:
     """Transcribe mono samples using a lazy Generate Content client."""
 
     def __init__(self, model: str = 'gemini-3.8-flash', language: str = 'vi',
-                 request_timeout_seconds: float = 30.0, client: Any | None = None,
+                 request_timeout_seconds: float = 120.0, client: Any | None = None,
                  client_factory: Callable[[str], Any] | None = None):
         if not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0:
             raise ValueError('request timeout must be finite and positive')

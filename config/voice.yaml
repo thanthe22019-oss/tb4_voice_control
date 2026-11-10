@@ -3,4 +3,4 @@ max_record_seconds: 15
 provider: gemini
 model: gemini-3.8-flash
 language: vi
-request_timeout_seconds: 30
+request_timeout_seconds: 120

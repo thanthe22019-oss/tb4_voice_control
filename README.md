@@ -80,7 +80,7 @@ tương thích ABI với OpenCV/ROS. `--help` hoặc mở UI chưa chứng minh 
 
 SDK được giới hạn `google-genai>=2.33,<2.34` cho Python 3.10/ROS Humble.
 Adapter dùng Generate Content API với WAV inline trong RAM, `store=False`,
-`automatic_continuation=False`, timeout mặc định 30 giây và không tự retry.
+`automatic_continuation=False`, timeout mặc định 120 giây và không tự retry.
 Không đặt retry options: transport của phiên bản này thực hiện đúng một lần.
 Kiểm thử SDK thật hoàn toàn offline (synthetic key + `httpx.MockTransport`):
 
