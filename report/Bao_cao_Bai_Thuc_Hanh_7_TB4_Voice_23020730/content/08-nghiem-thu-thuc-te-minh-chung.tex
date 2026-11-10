@@ -44,15 +44,15 @@ Theo đúng quy tắc minh bạch bằng chứng trong \path{docs/TEST_MATRIX.md
 \subsection*{10.2. Minh chứng hình ảnh cho các kịch bản điều khiển bằng giọng nói và Nav2}
 \addcontentsline{toc}{subsection}{10.2. Minh chứng hình ảnh cho các kịch bản điều khiển bằng giọng nói và Nav2}
 
-Các khung hình dưới đây được thiết lập sẵn bằng macro \texttt{\textbackslash reportfigure}. Khi người vận hành lưu ảnh chụp màn hình vào thư mục \path{images/} với đúng tên file quy định và biên dịch lại \path{main.tex}, khung giữ chỗ sẽ tự động được thay thế bằng ảnh thực tế:
+Các ảnh chụp ngày 10/11/2026 đã được lưu trong thư mục \path{images/} và được macro \texttt{\textbackslash reportfigure} chèn tự động. Ảnh là bằng chứng trực quan cho trạng thái giao diện tại thời điểm chụp; các tiêu chí cần quan sát trọn vẹn quá trình hoặc đo số liệu vẫn giữ ký hiệu \pending{} trong Bảng~10.1.
 
-\reportfigure[Cửa sổ Voice Control UI hiển thị transcript nhận dạng từ câu nói Đi đến khu vực A, \texttt{Intent: GO\_TO} -- đi đến Khu vực A, kết quả Điều hướng thành công cùng RViz2/Gazebo khi robot tới \texttt{zone\_a}]{04_voice_command_zone_a.png}{Kết quả nhận dạng và điều hướng câu lệnh bắt buộc thứ nhất: \textit{``Đi đến khu vực A''}}
+\reportfigure[Cửa sổ Voice Control UI hiển thị transcript ``Di chuyển đến khu vực A'', \texttt{Intent: GO\_TO} -- đi đến Khu vực A, hàng đợi một chặng và trạng thái robot đang gửi goal tới Nav2; RViz2 hiển thị quỹ đạo đang thực thi]{07_rviz_single_route.png}{Nhận dạng và bắt đầu thực thi câu lệnh bắt buộc thứ nhất: \textit{``Đi đến khu vực A''}}
 
 \reportfigure[Cửa sổ Voice Control UI hiển thị transcript Đi đến phòng thí nghiệm, phân giải alias phòng thí nghiệm thành \texttt{Intent: GO\_TO} -- đi đến Khu vực B (\texttt{zone\_b}), cùng RViz2/Gazebo khi robot tới Khu vực B]{05_voice_command_alias_lab.png}{Kết quả nhận dạng và phân giải alias cho câu lệnh bắt buộc thứ hai: \textit{``Đi đến phòng thí nghiệm''}}
 
 \reportfigure[Giao diện Voice Control UI hiển thị thông báo lỗi mã \texttt{unknown\_region} kèm danh sách Khu vực hợp lệ: Khu vực A, Khu vực B, Khu vực C và trạng thái Có lỗi -- chưa gửi thêm goal khi ra lệnh tới vùng không tồn tại]{06_invalid_region_handling.png}{Xử lý an toàn khi câu lệnh chứa tên vùng không tồn tại (\texttt{unknown\_region}) mà không gửi goal tới Nav2}
 
-\reportfigure[Cửa sổ RViz2 và Gazebo trong quá trình điều hướng đơn chặng: thể hiện bản đồ, particle cloud AMCL hội tụ, global path, local/global costmap và mô hình robot bám đường]{07_rviz_single_route.png}{Quá trình TurtleBot 4 bám đường đi toàn cục (global path) trên RViz2 và Ignition Gazebo}
+\reportfigure[Cửa sổ Voice Control UI hiển thị transcript ``Di chuyển từ khu vực A đến khu vực B'', intent \texttt{FROM\_TO} và chặng đang hoạt động tới Khu vực B; RViz2/Gazebo thể hiện robot, costmap và đường quy hoạch trong lúc di chuyển]{04_voice_command_zone_a.png}{Lệnh \texttt{FROM\_TO} đang thực thi một chặng tới Khu vực B khi robot đã ở Khu vực A}
 
 \reportfigure[Giao diện Voice Control UI và RViz2 khi thực hiện lệnh Di chuyển từ khu vực A đến khu vực B: hiển thị hàng đợi Khu vực A -> Khu vực B (2 chặng từ ngoài A), rút gọn 1 chặng khi đang ở A, khóa nút lệnh mới và dừng an toàn khi nhấn Hủy lộ trình]{08_multi_leg_route_and_cancel.png}{Thực thi lộ trình đa chặng (\texttt{FROM\_TO}), khóa nhận lệnh mới khi đang chạy và hủy lộ trình an toàn}
 
